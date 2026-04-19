@@ -4,10 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
 
   - package-ecosystem: gradle
     directory: /client-mod
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
