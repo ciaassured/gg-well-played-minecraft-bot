@@ -3,6 +3,7 @@ package io.github.ciaassured.yrushbot.client;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,16 +17,22 @@ public final class YRushBotClient implements ClientModInitializer {
     private BotBridgeServer bridgeServer;
     private ActionService actionService;
     private ObservationService observationService;
+    private YRushObjectiveService yrushObjectiveService;
     private int ticksSinceObservation;
 
     @Override
     public void onInitializeClient() {
         actionService = new ActionService();
-        observationService = new ObservationService();
+        yrushObjectiveService = new YRushObjectiveService();
+        observationService = new ObservationService(yrushObjectiveService);
         bridgeServer = new BotBridgeServer(BridgeConfig.DEFAULT);
         bridgeServer.start();
 
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
+        ClientReceiveMessageEvents.GAME.register((message, overlay) ->
+            yrushObjectiveService.handleMessage(message.getString(), overlay ? "actionbar" : "game"));
+        ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, receptionTimestamp) ->
+            yrushObjectiveService.handleMessage(message.getString(), "chat"));
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> shutdown());
 
         LOGGER.info("YRush Bot client loaded. Bridge listening on {}:{}",

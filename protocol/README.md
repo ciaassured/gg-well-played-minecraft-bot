@@ -52,6 +52,14 @@ Sent by the mod every few client ticks:
     "hotbar": [
       {"slot": 0, "item": "minecraft:dirt", "count": 12}
     ]
+  },
+  "yrush": {
+    "objective_known": true,
+    "direction": "UP",
+    "distance_total": 42,
+    "source": "game",
+    "message": "CLIMB 42 BLOCKS",
+    "received_at": "2026-04-19T02:15:00Z"
   }
 }
 ```

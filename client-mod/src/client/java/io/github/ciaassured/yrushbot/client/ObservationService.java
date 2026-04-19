@@ -12,12 +12,19 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 
 public final class ObservationService {
+    private final YRushObjectiveService yrushObjectiveService;
+
+    public ObservationService(YRushObjectiveService yrushObjectiveService) {
+        this.yrushObjectiveService = yrushObjectiveService;
+    }
+
     public JsonObject capture(Minecraft client) {
         JsonObject observation = Protocol.baseMessage("observation");
         observation.addProperty("tick", client.level == null ? 0L : client.level.getGameTime());
         observation.add("screen", captureScreen(client.screen));
         observation.add("player", capturePlayer(client.player));
         observation.add("inventory", captureInventory(client.player));
+        observation.add("yrush", yrushObjectiveService.capture());
         return observation;
     }
 

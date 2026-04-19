@@ -78,6 +78,10 @@ def read_loop(client: DebugClient) -> None:
         if message.get("type") == "observation":
             client.latest_observation = message
             player = message.get("player", {})
+            yrush = message.get("yrush", {})
+            objective = ""
+            if yrush.get("objective_known"):
+                objective = f" objective={yrush.get('direction')}:{yrush.get('distance_total')}"
             if player.get("present"):
                 print(
                     "obs "
@@ -86,6 +90,7 @@ def read_loop(client: DebugClient) -> None:
                     f"z={player.get('z'):.2f} "
                     f"yaw={player.get('yaw'):.1f} "
                     f"pitch={player.get('pitch'):.1f}"
+                    f"{objective}"
                 )
         else:
             print(json.dumps(message, indent=2))
@@ -103,7 +108,7 @@ def print_help() -> None:
     print(
         "commands: w/a/s/d on|off, jump on|off, sneak on|off, sprint on|off, "
         "look <yaw_delta> <pitch_delta>, attack on|off, use on|off, slot 0-8, "
-        "release, obs, quit"
+        "release, obs, yrush, quit"
     )
 
 
@@ -131,6 +136,9 @@ def command_loop(client: DebugClient) -> None:
                 client.release_all()
             elif command == "obs":
                 print(json.dumps(client.latest_observation, indent=2))
+            elif command == "yrush":
+                observation = client.latest_observation or {}
+                print(json.dumps(observation.get("yrush"), indent=2))
             elif command in {"w", "a", "s", "d", "jump", "sneak", "sprint"}:
                 if len(parts) != 2:
                     raise ValueError("expected: command on|off")
