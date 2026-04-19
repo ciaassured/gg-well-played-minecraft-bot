@@ -79,9 +79,18 @@ def read_loop(client: DebugClient) -> None:
             client.latest_observation = message
             player = message.get("player", {})
             yrush = message.get("yrush", {})
+            inventory = message.get("inventory", {})
+            summary = inventory.get("summary", {})
             objective = ""
             if yrush.get("objective_known"):
                 objective = f" objective={yrush.get('direction')}:{yrush.get('distance_total')}"
+            inventory_text = ""
+            if summary:
+                inventory_text = (
+                    f" blocks={summary.get('placeable_blocks', 0)}"
+                    f" logs={summary.get('logs', 0)}"
+                    f" pickaxe={summary.get('best_pickaxe', 'none')}"
+                )
             if player.get("present"):
                 print(
                     "obs "
@@ -90,6 +99,7 @@ def read_loop(client: DebugClient) -> None:
                     f"z={player.get('z'):.2f} "
                     f"yaw={player.get('yaw'):.1f} "
                     f"pitch={player.get('pitch'):.1f}"
+                    f"{inventory_text}"
                     f"{objective}"
                 )
         else:
@@ -108,7 +118,7 @@ def print_help() -> None:
     print(
         "commands: w/a/s/d on|off, jump on|off, sneak on|off, sprint on|off, "
         "look <yaw_delta> <pitch_delta>, attack on|off, use on|off, slot 0-8, "
-        "release, obs, yrush, quit"
+        "release, obs, inventory, yrush, quit"
     )
 
 
@@ -139,6 +149,9 @@ def command_loop(client: DebugClient) -> None:
             elif command == "yrush":
                 observation = client.latest_observation or {}
                 print(json.dumps(observation.get("yrush"), indent=2))
+            elif command == "inventory":
+                observation = client.latest_observation or {}
+                print(json.dumps(observation.get("inventory"), indent=2))
             elif command in {"w", "a", "s", "d", "jump", "sneak", "sprint"}:
                 if len(parts) != 2:
                     raise ValueError("expected: command on|off")

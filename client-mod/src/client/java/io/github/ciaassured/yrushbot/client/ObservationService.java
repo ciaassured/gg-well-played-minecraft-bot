@@ -13,9 +13,11 @@ import net.minecraft.world.phys.Vec3;
 
 public final class ObservationService {
     private final YRushObjectiveService yrushObjectiveService;
+    private final InventorySummaryService inventorySummaryService;
 
     public ObservationService(YRushObjectiveService yrushObjectiveService) {
         this.yrushObjectiveService = yrushObjectiveService;
+        this.inventorySummaryService = new InventorySummaryService();
     }
 
     public JsonObject capture(Minecraft client) {
@@ -72,6 +74,7 @@ public final class ObservationService {
         Inventory inventory = player.getInventory();
         inventoryObject.addProperty("selected_slot", inventory.getSelectedSlot());
         inventoryObject.add("hotbar", captureHotbar(inventory));
+        inventoryObject.add("summary", inventorySummaryService.summarize(inventory));
         return inventoryObject;
     }
 

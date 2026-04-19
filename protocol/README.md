@@ -51,7 +51,23 @@ Sent by the mod every few client ticks:
     "selected_slot": 0,
     "hotbar": [
       {"slot": 0, "item": "minecraft:dirt", "count": 12}
-    ]
+    ],
+    "summary": {
+      "placeable_blocks": 12,
+      "logs": 0,
+      "planks": 0,
+      "sticks": 0,
+      "crafting_tables": 0,
+      "dirt_like_blocks": 12,
+      "stone_like_blocks": 0,
+      "wood_like_blocks": 0,
+      "has_pickaxe": false,
+      "best_pickaxe": "none",
+      "has_axe": false,
+      "best_axe": "none",
+      "has_shovel": false,
+      "best_shovel": "none"
+    }
   },
   "yrush": {
     "objective_known": true,
