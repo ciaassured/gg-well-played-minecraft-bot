@@ -1,0 +1,86 @@
+name: Client Mod
+
+on:
+  pull_request:
+    paths:
+      - "client-mod/**"
+      - ".github/workflows/client-mod.yml"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - "client-mod/**"
+      - ".github/workflows/client-mod.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build client mod
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: client-mod
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Build
+        run: ./gradlew build --no-daemon
+
+      - name: Upload mod jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: yrush-bot-client
+          path: client-mod/build/libs/yrush-bot-client-*.jar
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        working-directory: client-mod
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Build release jar
+        run: ./gradlew build --no-daemon
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            client-mod/build/libs/yrush-bot-client-*.jar
+          generate_release_notes: true
