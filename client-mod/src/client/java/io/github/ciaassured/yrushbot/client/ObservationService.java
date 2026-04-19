@@ -26,7 +26,7 @@ public final class ObservationService {
         observation.add("screen", captureScreen(client.screen));
         observation.add("player", capturePlayer(client.player));
         observation.add("inventory", captureInventory(client.player));
-        observation.add("yrush", yrushObjectiveService.capture());
+        observation.add("yrush", yrushObjectiveService.capture(client.player));
         return observation;
     }
 

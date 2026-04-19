@@ -70,11 +70,19 @@ Sent by the mod every few client ticks:
     }
   },
   "yrush": {
+    "source": "packet",
+    "schema_version": 1,
+    "round_active": true,
+    "player_active": true,
+    "phase": "ACTIVE",
+    "should_pursue_objective": true,
     "objective_known": true,
     "direction": "UP",
-    "distance_total": 42,
-    "source": "game",
-    "message": "CLIMB 42 BLOCKS",
+    "target_y": 106,
+    "distance_remaining": 42,
+    "active_players": 1,
+    "total_players": 1,
+    "seconds_remaining": 217,
     "received_at": "2026-04-19T02:15:00Z"
   }
 }

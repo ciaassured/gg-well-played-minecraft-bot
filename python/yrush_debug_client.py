@@ -82,7 +82,15 @@ def read_loop(client: DebugClient) -> None:
             inventory = message.get("inventory", {})
             summary = inventory.get("summary", {})
             objective = ""
-            if yrush.get("objective_known"):
+            if yrush.get("source") == "packet":
+                objective = (
+                    f" yrush={yrush.get('phase')}"
+                    f" pursue={yrush.get('should_pursue_objective')}"
+                    f" target={yrush.get('target_y')}"
+                    f" remaining={yrush.get('distance_remaining')}"
+                    f" time={yrush.get('seconds_remaining')}"
+                )
+            elif yrush.get("objective_known"):
                 objective = f" objective={yrush.get('direction')}:{yrush.get('distance_total')}"
             inventory_text = ""
             if summary:

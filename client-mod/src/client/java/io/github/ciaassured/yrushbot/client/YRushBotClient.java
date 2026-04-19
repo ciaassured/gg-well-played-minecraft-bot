@@ -4,6 +4,8 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +30,9 @@ public final class YRushBotClient implements ClientModInitializer {
         bridgeServer = new BotBridgeServer(BridgeConfig.DEFAULT);
         bridgeServer.start();
 
+        PayloadTypeRegistry.playS2C().register(YRushTrainingStatePayload.TYPE, YRushTrainingStatePayload.CODEC);
+        ClientPlayNetworking.registerGlobalReceiver(YRushTrainingStatePayload.TYPE,
+            (payload, context) -> yrushObjectiveService.handleTrainingStatePacket(payload.json()));
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
         ClientReceiveMessageEvents.GAME.register((message, overlay) ->
             yrushObjectiveService.handleMessage(message.getString(), overlay ? "actionbar" : "game"));
