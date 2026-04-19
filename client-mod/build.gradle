@@ -1,0 +1,98 @@
+plugins {
+    id "fabric-loom" version "${loom_version}"
+    id "maven-publish"
+}
+
+import java.util.Properties
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "yrush-bot-client" {
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = "UTF-8"
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version
+    }
+}
+
+def localPropertiesFile = rootProject.file("local.properties")
+def localProperties = new Properties()
+if (localPropertiesFile.isFile()) {
+    localPropertiesFile.withInputStream { stream ->
+        localProperties.load(stream)
+    }
+}
+
+tasks.register("deployMod", Copy) {
+    group = "deployment"
+    description = "Builds the remapped mod jar and copies it to the configured Minecraft mods directory."
+
+    dependsOn tasks.named("remapJar")
+
+    def configuredModsDir = providers.provider {
+        localProperties.getProperty("modsDir")
+    }
+
+    onlyIf {
+        if (!localPropertiesFile.isFile()) {
+            throw new GradleException("Missing local.properties. Copy local.properties.example to local.properties and set modsDir.")
+        }
+        if (!configuredModsDir.get()) {
+            throw new GradleException("Missing modsDir in local.properties.")
+        }
+        true
+    }
+
+    from(tasks.named("remapJar").flatMap { it.archiveFile })
+    into(layout.projectDirectory.dir(configuredModsDir.get()))
+
+    doLast {
+        logger.lifecycle("Copied ${tasks.named("remapJar").get().archiveFile.get().asFile.name} to ${configuredModsDir.get()}")
+    }
+}
+
+tasks.register("buildAndDeployMod") {
+    group = "deployment"
+    description = "Runs the full build, then copies the remapped mod jar to the configured Minecraft mods directory."
+
+    dependsOn tasks.named("build")
+    finalizedBy tasks.named("deployMod")
+}
