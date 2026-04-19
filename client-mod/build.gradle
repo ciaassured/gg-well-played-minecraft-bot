@@ -73,10 +73,10 @@ tasks.register("deployMod", Copy) {
 
     onlyIf {
         if (!localPropertiesFile.isFile()) {
-            throw new GradleException("Missing local.properties. Copy local.properties.example to local.properties and set modsDir.")
+            throw new RuntimeException("Missing local.properties. Copy local.properties.example to local.properties and set modsDir.")
         }
         if (!configuredModsDir.get()) {
-            throw new GradleException("Missing modsDir in local.properties.")
+            throw new RuntimeException("Missing modsDir in local.properties.")
         }
         true
     }
