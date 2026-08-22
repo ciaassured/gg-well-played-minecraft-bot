@@ -1,0 +1,7 @@
+version: v2
+clean: true
+plugins:
+  - local: protoc-gen-python
+    out: gen/python
+  - local: protoc-gen-java
+    out: gen/java

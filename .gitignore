@@ -1,0 +1,21 @@
+# Nix build links
+result
+result-*
+
+# Per-project build output
+**/.gradle/
+**/build/
+**/.direnv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/__pycache__/
+**/*.pyc
+
+# Runtime state and generated artifacts
+benchmark-server/runtime/
+client-mod/runtime/
+runs/
+*.mcpr
+*.mp4
+*.mkv
