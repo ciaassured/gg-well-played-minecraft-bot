@@ -42,6 +42,7 @@ import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRegisterChannelEvent;
 import org.bukkit.event.weather.WeatherChangeEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
@@ -70,19 +71,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
   @Override
   public void onDisable() {
     for (PlayerSession session : sessions.values()) {
-      if (session.player.isOnline()) {
-        send(
-            session.player,
-            WireMessage.newBuilder()
-                .setProtocolVersion(PROTOCOL_VERSION)
-                .setShutdown(
-                    Shutdown.newBuilder()
-                        .setProtocolVersion(PROTOCOL_VERSION)
-                        .setSessionId(session.sessionId)
-                        .setEpisodeId(session.episodeId())
-                        .setReason("benchmark server stopping"))
-                .build());
-      }
+      session.controller.abortInfrastructure();
     }
     sessions.clear();
   }
@@ -140,20 +129,44 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
   }
 
   private void handleHello(Player player, ConnectionHello hello) {
+    getLogger()
+        .fine(
+            "Received benchmark hello from "
+                + player.getName()
+                + " for session "
+                + hello.getSessionId());
     if (hello.getProtocolVersion() != PROTOCOL_VERSION
         || hello.getSessionId().isBlank()
         || hello.getMode() == ClientMode.CLIENT_MODE_UNSPECIFIED) {
       sendError(player, null, ErrorCode.ERROR_CODE_INVALID_MESSAGE, "invalid connection hello");
       return;
     }
-    PlayerSession prior = sessions.remove(player.getUniqueId());
+    PlayerSession prior = sessions.get(player.getUniqueId());
+    if (prior != null
+        && prior.sessionId.equals(hello.getSessionId())
+        && prior.mode == hello.getMode()) {
+      sendConnectionReady(prior, hello.getClientTick());
+      return;
+    }
+    prior = sessions.remove(player.getUniqueId());
     if (prior != null) {
       prior.controller.abortInfrastructure();
     }
     PlayerSession session = new PlayerSession(player, hello.getSessionId(), hello.getMode());
     sessions.put(player.getUniqueId(), session);
+    sendConnectionReady(session, hello.getClientTick());
+  }
+
+  @EventHandler
+  public void onPlayerRegisterChannel(PlayerRegisterChannelEvent event) {
+    if (CHANNEL.equals(event.getChannel())) {
+      getLogger().info("Client " + event.getPlayer().getName() + " registered " + CHANNEL);
+    }
+  }
+
+  private void sendConnectionReady(PlayerSession session, long clientTick) {
     send(
-        player,
+        session.player,
         WireMessage.newBuilder()
             .setProtocolVersion(PROTOCOL_VERSION)
             .setConnectionReady(
@@ -162,7 +175,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
                     .setSessionId(session.sessionId)
                     .setMode(session.mode)
                     .setMinecraftVersion("26.2")
-                    .setClientTick(hello.getClientTick())
+                    .setClientTick(clientTick)
                     .setServerTick(serverTick))
             .build());
   }
@@ -190,6 +203,16 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
             request.getSeed(),
             gap);
     ResetStatus status = session.controller.requestReset(command);
+    getLogger()
+        .fine(
+            "Reset "
+                + request.getRequestId()
+                + " for episode "
+                + request.getEpisodeId()
+                + " (seed "
+                + request.getSeed()
+                + ") is "
+                + status.name().toLowerCase());
     switch (status) {
       case ACCEPTED -> {
         session.resetClientTick = request.getClientTick();
@@ -242,7 +265,6 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
           "action rejected: " + status.name().toLowerCase());
       return;
     }
-    sendState(session, session.controller.snapshot(false));
   }
 
   private void handleShutdown(Player player, Shutdown shutdown) {
@@ -269,7 +291,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
       if (session.controller.phase() == Phase.RESETTING) {
         boolean stable = arena.isStable(session.player, session.expectedSpawnX);
         if (session.controller.observeResetStability(
-            stable, session.player.getVelocity().lengthSquared())) {
+            stable, arena.horizontalSpeedSquared(session.player))) {
           cacheReady(session);
           sendReady(session);
         }
@@ -278,9 +300,12 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
       if (session.controller.phase() != Phase.ACTIVE) {
         continue;
       }
+      int previousElapsedTicks = session.controller.elapsedTicks();
       TickSnapshot snapshot =
           session.controller.tick(serverTick, arena.observe(session.player), geometry);
-      sendState(session, snapshot);
+      if (snapshot.elapsedTicks() > previousElapsedTicks || snapshot.finishedNow()) {
+        sendState(session, snapshot);
+      }
       if (snapshot.finishedNow()) {
         sendResult(session, snapshot);
       }
@@ -307,6 +332,9 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
             .setClientTick(session.resetClientTick)
             .setInitialServerTick(serverTick)
             .build();
+    getLogger()
+        .fine(
+            "Episode " + command.episodeId() + " is stable and ready at server tick " + serverTick);
   }
 
   private void sendReady(PlayerSession session) {

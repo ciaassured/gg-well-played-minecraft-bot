@@ -55,6 +55,14 @@
           fi
           touch "$out"
         '';
+
+      idempotent-handshake = pkgs.runCommand "jump-server-idempotent-handshake" {} ''
+        grep -q 'prior.sessionId.equals(hello.getSessionId())' \
+          ${../src/main/java/gg/wellplayed/jump/server/JumpBenchmarkPlugin.java}
+        grep -q 'sendConnectionReady(prior, hello.getClientTick())' \
+          ${../src/main/java/gg/wellplayed/jump/server/JumpBenchmarkPlugin.java}
+        touch "$out"
+      '';
     };
   };
 }

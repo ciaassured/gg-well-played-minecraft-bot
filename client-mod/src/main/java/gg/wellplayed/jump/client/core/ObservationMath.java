@@ -43,11 +43,12 @@ public final class ObservationMath {
         wallNearCoordinate - front, minY - standingFeetY, velocityY, laneVelocity, onGround);
   }
 
-  public static boolean resetStateMatches(Sample sample, double startingGap, double speedSquared) {
+  public static boolean resetStateMatches(
+      Sample sample, double startingGap, double horizontalSpeedSquared) {
     return sample.onGround()
         && Math.abs(sample.signedWallDistance() - startingGap) <= STABLE_POSITION_EPSILON
         && Math.abs(sample.relativeFeetHeight()) <= STABLE_POSITION_EPSILON
-        && speedSquared <= STABLE_SPEED_SQUARED;
+        && horizontalSpeedSquared <= STABLE_SPEED_SQUARED;
   }
 
   private static void requireLane(double x, double z) {

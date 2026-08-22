@@ -65,10 +65,15 @@ final class ArenaManager {
     requireMainThread();
     Vector velocity = player.getVelocity();
     return player.isOnGround()
-        && velocity.lengthSquared() <= 1.0e-8
+        && horizontalSpeedSquared(velocity) <= 1.0e-8
         && Math.abs(player.getX() - expectedSpawnX) <= POSITION_TOLERANCE
         && Math.abs(player.getZ() - 0.5) <= POSITION_TOLERANCE
         && Math.abs(player.getY() - geometry.standingFeetY()) <= POSITION_TOLERANCE;
+  }
+
+  double horizontalSpeedSquared(Player player) {
+    requireMainThread();
+    return horizontalSpeedSquared(player.getVelocity());
   }
 
   Kinematics observe(Player player) {
@@ -114,5 +119,12 @@ final class ArenaManager {
     if (!Bukkit.isPrimaryThread()) {
       throw new IllegalStateException("arena mutation/observation must run on Paper's main thread");
     }
+  }
+
+  private static double horizontalSpeedSquared(Vector velocity) {
+    // A grounded vanilla player retains the gravity sentinel (-0.0784) in Y even while its
+    // collision-resolved feet position is stationary. Reset readiness therefore uses the actual
+    // lane motion and grounded position instead of requiring that internal Y value to be zero.
+    return velocity.getX() * velocity.getX() + velocity.getZ() * velocity.getZ();
   }
 }

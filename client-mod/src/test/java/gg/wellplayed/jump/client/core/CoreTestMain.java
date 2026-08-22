@@ -151,6 +151,7 @@ public final class CoreTestMain {
     close(0.1, sample.laneVelocity());
     check(sample.onGround());
     check(ObservationMath.resetStateMatches(sample, 5.7, 0.0));
+    check(!ObservationMath.resetStateMatches(sample, 5.7, 1.0e-4));
 
     ObservationMath.Sample diagonal =
         ObservationMath.sample(

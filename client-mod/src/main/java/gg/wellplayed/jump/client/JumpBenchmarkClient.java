@@ -51,6 +51,8 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
           Integer.getInteger("jump.client.port", DEFAULT_PORT), new TrainerListener());
 
   private long clientTick;
+  private long lastHelloAttemptTick;
+  private long lastStabilityLogTick;
   private ConnectionHello hello;
   private ConnectionReady connectionReady;
   private boolean jumpPressedThisTick;
@@ -88,6 +90,10 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
             .build();
     connectionReady = null;
     WireMessage envelope = envelope().setConnectionHello(hello).build();
+    lastHelloAttemptTick = clientTick;
+    LOGGER.info(
+        "Joined Paper; jump:control sendable={}",
+        ClientPlayNetworking.canSend(BenchmarkPayload.TYPE));
     sendPaper(client, envelope);
     sendTrainerIfConnected(envelope, client);
   }
@@ -191,7 +197,13 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
           connectionReady = ready;
           sendTrainerIfConnected(message, client);
         }
-        case EPISODE_READY -> sequencer.receiveReady(message.getEpisodeReady());
+        case EPISODE_READY -> {
+          sequencer.receiveReady(message.getEpisodeReady());
+          lastStabilityLogTick = clientTick;
+          LOGGER.debug(
+              "Paper episode {} is ready; checking client reset state",
+              message.getEpisodeReady().getEpisodeId());
+        }
         case EPISODE_STATE -> sequencer.receiveState(message.getEpisodeState());
         case EPISODE_RESULT -> sequencer.receiveResult(message.getEpisodeResult());
         case ERROR -> {
@@ -218,6 +230,15 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     inputs.finishTick();
     syncInputs(client);
     jumpPressedThisTick = false;
+    if (hello != null
+        && connectionReady == null
+        && clientTick - lastHelloAttemptTick >= 20
+        && client.getConnection() != null
+        && ClientPlayNetworking.canSend(BenchmarkPayload.TYPE)) {
+      lastHelloAttemptTick = clientTick;
+      LOGGER.info("Retrying Paper benchmark hello at client tick {}", clientTick);
+      sendPaper(client, envelope().setConnectionHello(hello).build());
+    }
     if (sequencer.actionTimedOut(clientTick)) {
       releaseAll(client);
       sequencer.abort();
@@ -272,8 +293,9 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
       EpisodeReady ready = sequencer.ready();
       ObservationMath.Sample sample = sample(client.player, ready);
       Vec3 velocity = client.player.getDeltaMovement();
+      double horizontalSpeedSquared = velocity.x * velocity.x + velocity.z * velocity.z;
       boolean stable =
-          ObservationMath.resetStateMatches(sample, ready.getStartingGap(), velocity.lengthSqr());
+          ObservationMath.resetStateMatches(sample, ready.getStartingGap(), horizontalSpeedSquared);
       if (sequencer.observeClientStability(stable, clientTick)) {
         EpisodeReady synchronizedReady = ready.toBuilder().setClientTick(clientTick).build();
         sendTrainerIfConnected(envelope().setEpisodeReady(synchronizedReady).build(), client);
@@ -288,6 +310,15 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
                 .setPhase(EpisodePhase.EPISODE_PHASE_READY)
                 .setTerminalReason(TerminalReason.TERMINAL_REASON_UNSPECIFIED)
                 .build());
+      } else if (!stable && clientTick - lastStabilityLogTick >= 20) {
+        lastStabilityLogTick = clientTick;
+        LOGGER.warn(
+            "Waiting for client reset state: distance={}, height={}, horizontalSpeedSquared={},"
+                + " onGround={}",
+            sample.signedWallDistance(),
+            sample.relativeFeetHeight(),
+            horizontalSpeedSquared,
+            sample.onGround());
       }
       return;
     }

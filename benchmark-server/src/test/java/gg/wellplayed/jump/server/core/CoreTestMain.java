@@ -19,6 +19,7 @@ public final class CoreTestMain {
     resetsAreIdempotentAndSequenced();
     readinessNeedsTwoStableTicks();
     actionSequencesAreStrict();
+    waitsForAnActionBeforeAdvancing();
     detectsSuccess();
     detectsMissedJump();
     enforcesTimeLimit();
@@ -73,6 +74,9 @@ public final class CoreTestMain {
     check(!controller.observeResetStability(true, 0), "first stable tick");
     check(!controller.observeResetStability(false, 0), "unstable tick resets count");
     check(!controller.observeResetStability(true, 0), "new first stable tick");
+    check(
+        !controller.observeResetStability(true, 1.0e-4), "horizontal movement resets stable count");
+    check(!controller.observeResetStability(true, 0), "stable count restarts after movement");
     check(controller.observeResetStability(true, 0), "second consecutive stable tick");
   }
 
@@ -91,6 +95,16 @@ public final class CoreTestMain {
     check(result.finishedNow(), "success finishes");
     check(result.phase() == Phase.TERMINAL, "success terminal");
     check(result.reason() == EndReason.SUCCESS, "success reason");
+  }
+
+  private static void waitsForAnActionBeforeAdvancing() {
+    EpisodeController controller = activeController();
+    Kinematics moving = new Kinematics(10.1, 9.5, 0, 0, 0.1, true);
+    controller.tick(11, moving, ArenaGeometry.STANDARD);
+    check(controller.elapsedTicks() == 1, "accepted action advances exactly one tick");
+    controller.tick(12, moving, ArenaGeometry.STANDARD);
+    check(controller.elapsedTicks() == 1, "elapsed time waits for the next action");
+    check(controller.phase() == Phase.ACTIVE, "waiting for an action remains active");
   }
 
   private static void detectsMissedJump() {
@@ -127,6 +141,7 @@ public final class CoreTestMain {
 
   private static void abortsOnActionDeadline() {
     EpisodeController controller = activeController();
+    controller.tick(11, new Kinematics(10, 9.4, 0, 0, 0, true), ArenaGeometry.STANDARD);
     var result =
         controller.tick(21, new Kinematics(10, 9.4, 0, 0, 0, true), ArenaGeometry.STANDARD);
     check(result.phase() == Phase.ABORTED, "deadline abort phase");

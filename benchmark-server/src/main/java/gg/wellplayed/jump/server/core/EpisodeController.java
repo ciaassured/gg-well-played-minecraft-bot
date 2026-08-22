@@ -115,11 +115,11 @@ public final class EpisodeController {
   }
 
   /** Returns true only on the tick that reset stability becomes ready. */
-  public boolean observeResetStability(boolean onGround, double speedSquared) {
+  public boolean observeResetStability(boolean onGround, double horizontalSpeedSquared) {
     if (phase != Phase.RESETTING) {
       return false;
     }
-    if (onGround && speedSquared <= STATIONARY_SPEED_SQUARED) {
+    if (onGround && horizontalSpeedSquared <= STATIONARY_SPEED_SQUARED) {
       stableTicks++;
     } else {
       stableTicks = 0;
@@ -155,8 +155,12 @@ public final class EpisodeController {
     if (phase != Phase.ACTIVE) {
       return snapshot(false);
     }
-    if (serverTick - lastActionServerTick > ACTION_DEADLINE_TICKS) {
+    if (lastActionSequence <= elapsedTicks
+        && serverTick - lastActionServerTick > ACTION_DEADLINE_TICKS) {
       return finish(Phase.ABORTED, EndReason.INFRASTRUCTURE_ERROR);
+    }
+    if (lastActionSequence <= elapsedTicks) {
+      return snapshot(false);
     }
 
     elapsedTicks++;
