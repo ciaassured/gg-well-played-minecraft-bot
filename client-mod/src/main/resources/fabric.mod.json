@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "jump_benchmark_client",
+  "version": "${version}",
+  "name": "One-Block Jump Benchmark Client",
+  "description": "Tick-synchronous Fabric bridge between the Python trainer and Paper benchmark.",
+  "authors": ["gg-well-played"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "gg.wellplayed.jump.client.JumpBenchmarkClient"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "jump_benchmark_client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "gg.wellplayed.jump.client.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "GameNarratorMixin",
+    "SoundManagerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
