@@ -38,6 +38,23 @@
         '';
 
       plugin-build = serverArtifacts.plugin;
+
+      protobuf-isolation =
+        pkgs.runCommand "jump-server-protobuf-isolation" {
+          nativeBuildInputs = [pkgs.jdk25_headless];
+        } ''
+          jar tf \
+            ${serverArtifacts.plugin}/share/jump-benchmark-server/jump-benchmark-paper.jar \
+            > contents.txt
+          grep -q \
+            '^gg/wellplayed/jump/server/internal/protobuf/MessageLite.class$' \
+            contents.txt
+          if grep -q '^com/google/protobuf/' contents.txt; then
+            echo "unrelocated protobuf classes would collide with Paper" >&2
+            exit 1
+          fi
+          touch "$out"
+        '';
     };
   };
 }
