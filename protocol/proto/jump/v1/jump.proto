@@ -196,6 +196,9 @@ message Shutdown {
   uint64 episode_id = 4;
   string reason = 5;
   bool disconnect_minecraft = 6;
+  // Recording clients reconnect only after the current Replay Mod file has
+  // been finalized and CaptureComplete has been sent.
+  bool reconnect_minecraft = 7;
 }
 
 message CaptureRequest {

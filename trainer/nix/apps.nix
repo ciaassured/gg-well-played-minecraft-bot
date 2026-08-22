@@ -25,6 +25,7 @@
       train = mkCommand "train" "train";
       evaluate = mkCommand "evaluate" "evaluate";
       run = mkCommand "run" "run";
+      capture = mkCommand "capture" "capture";
       smoke = mkCommand "smoke" "smoke";
     };
   };

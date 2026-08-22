@@ -11,6 +11,7 @@ from typing import Any
 
 from stable_baselines3 import DQN
 
+from jump_trainer.capture import capture_retained_checkpoints
 from jump_trainer.config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -35,10 +36,13 @@ from jump_trainer.run_directory import (
 from jump_trainer.training import train
 
 
-def _add_connection_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_connection_arguments(
+    parser: argparse.ArgumentParser,
+    timeout_default: float = 5.0,
+) -> None:
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--timeout", type=float, default=timeout_default)
     parser.add_argument("--reset-retries", type=int, default=3)
 
 
@@ -77,6 +81,12 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--seed", type=int, default=SHOWCASE_SEED)
     run.add_argument("--output", type=Path)
     _add_connection_arguments(run)
+
+    capture = commands.add_parser(
+        "capture", help="record untrained and promoted checkpoint showcases"
+    )
+    capture.add_argument("run", type=Path)
+    _add_connection_arguments(capture, timeout_default=60.0)
     return parser
 
 
@@ -192,6 +202,23 @@ def _train(arguments: argparse.Namespace) -> dict[str, Any]:
     return {"status": "complete", "run_directory": str(run.root)}
 
 
+def _capture(arguments: argparse.Namespace) -> dict[str, Any]:
+    run = RunDirectory.open(Path(arguments.run))
+    manifest = capture_retained_checkpoints(
+        run,
+        host=str(arguments.host),
+        port=int(arguments.port),
+        timeout=float(arguments.timeout),
+        reset_retries=int(arguments.reset_retries),
+    )
+    return {
+        "status": manifest["status"],
+        "run_directory": str(run.root),
+        "capture_directory": manifest["capture_directory"],
+        "capture_count": len(manifest["captures"]),
+    }
+
+
 def main() -> None:
     arguments = _parser().parse_args()
     try:
@@ -203,6 +230,8 @@ def main() -> None:
             result = _train(arguments)
         elif arguments.command == "run":
             result = _run(arguments)
+        elif arguments.command == "capture":
+            result = _capture(arguments)
         else:
             raise AssertionError(f"unhandled command: {arguments.command}")
     except (InfrastructureError, FileNotFoundError, ValueError, RuntimeError) as exception:

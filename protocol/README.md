@@ -10,7 +10,8 @@ episode state/results, sequenced observations and actions, errors, shutdown, and
 Replay Mod capture coordination. TCP messages use a four-byte unsigned
 big-endian length followed by one `WireMessage`; peers reject frames larger than
 1 MiB. Minecraft custom payloads contain the Protobuf bytes directly because
-Minecraft supplies packet framing.
+Minecraft supplies packet framing. A recording shutdown explicitly says whether
+the client reconnects after Replay Mod has finalized and acknowledged the file.
 
 Commands:
 

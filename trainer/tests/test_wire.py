@@ -38,21 +38,24 @@ def envelope(**payload: Any) -> Any:
     return pb.WireMessage(protocol_version=1, **payload)
 
 
-def handshake_messages() -> list[Any]:
+def handshake_messages(
+    mode: int = pb.CLIENT_MODE_TRAINING,
+    session_id: str = "test-session",
+) -> list[Any]:
     return [
         envelope(
             connection_hello=pb.ConnectionHello(
                 protocol_version=1,
-                session_id="test-session",
-                mode=pb.CLIENT_MODE_TRAINING,
+                session_id=session_id,
+                mode=mode,
                 client_tick=10,
             )
         ),
         envelope(
             connection_ready=pb.ConnectionReady(
                 protocol_version=1,
-                session_id="test-session",
-                mode=pb.CLIENT_MODE_TRAINING,
+                session_id=session_id,
+                mode=mode,
                 minecraft_version="26.2",
                 client_tick=11,
                 server_tick=20,
@@ -182,3 +185,44 @@ def test_handshake_rejects_wrong_mode() -> None:
     messages[0].connection_hello.mode = pb.CLIENT_MODE_RECORDING
     with pytest.raises(ProtocolStateError, match="mode"):
         BenchmarkConnection(ScriptedTransport(messages))
+
+
+def test_recording_capture_is_acknowledged_before_reconnect() -> None:
+    transport = ScriptedTransport(
+        [
+            *handshake_messages(pb.CLIENT_MODE_RECORDING),
+            envelope(
+                capture_ready=pb.CaptureReady(
+                    protocol_version=1,
+                    request_id=200,
+                    session_id="test-session",
+                    checkpoint_id="untrained",
+                    client_tick=12,
+                )
+            ),
+            envelope(
+                capture_complete=pb.CaptureComplete(
+                    protocol_version=1,
+                    request_id=200,
+                    session_id="test-session",
+                    checkpoint_id="untrained",
+                    episode_id=202,
+                    replay_file="/tmp/untrained.mcpr",
+                    sha256=b"x" * 32,
+                    size_bytes=4096,
+                )
+            ),
+            *handshake_messages(pb.CLIENT_MODE_RECORDING, "next-session"),
+        ]
+    )
+    connection = BenchmarkConnection(transport, pb.CLIENT_MODE_RECORDING)
+    connection.begin_capture(200, "untrained", 202, 100000)
+    artifact = connection.finish_capture(203, "untrained", 202, True)
+
+    assert transport.sent[-2].capture_request.checkpoint_id == "untrained"
+    shutdown = transport.sent[-1].shutdown
+    assert shutdown.disconnect_minecraft
+    assert shutdown.reconnect_minecraft
+    assert artifact.replay_file.as_posix() == "/tmp/untrained.mcpr"
+    assert artifact.sha256 == b"x" * 32
+    assert connection.session_id == "next-session"

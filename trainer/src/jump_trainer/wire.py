@@ -6,6 +6,8 @@ import socket
 import struct
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from jump.v1 import jump_pb2 as pb
@@ -15,6 +17,17 @@ from jump_trainer.errors import InfrastructureError, ProtocolStateError, Protoco
 from jump_trainer.messages import RawObservation
 
 MAX_MESSAGE_BYTES = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class CaptureArtifact:
+    request_id: int
+    session_id: str
+    checkpoint_id: str
+    episode_id: int
+    replay_file: Path
+    sha256: bytes
+    size_bytes: int
 
 
 class MessageTransport(Protocol):
@@ -103,6 +116,7 @@ class BenchmarkConnection:
         self.client_tick = 0
         self.server_tick = 0
         self.current_episode_id = 0
+        self._capture_request: Any | None = None
         self._closed = False
         self._handshake()
 
@@ -239,6 +253,109 @@ class BenchmarkConnection:
             else:
                 raise ProtocolStateError(f"unexpected {case or 'empty'} message while stepping")
 
+    def begin_capture(
+        self,
+        request_id: int,
+        checkpoint_id: str,
+        episode_id: int,
+        seed: int,
+    ) -> None:
+        if self.expected_mode != pb.CLIENT_MODE_RECORDING:
+            raise ProtocolStateError("capture requires a recording-mode connection")
+        if self._capture_request is not None:
+            raise ProtocolStateError("another replay capture is already active")
+        if request_id <= 0 or episode_id <= 0 or not checkpoint_id:
+            raise ValueError("capture identifiers must be positive and non-empty")
+        request = pb.CaptureRequest(
+            protocol_version=PROTOCOL_VERSION,
+            request_id=request_id,
+            session_id=self.session_id,
+            checkpoint_id=checkpoint_id,
+            episode_id=episode_id,
+            seed=seed,
+        )
+        envelope = pb.WireMessage(protocol_version=PROTOCOL_VERSION, capture_request=request)
+        self._transport.send(envelope)
+        while True:
+            message = self._receive()
+            case = message.WhichOneof("payload")
+            if case == "capture_ready":
+                ready = message.capture_ready
+                self._require_version(ready.protocol_version, "capture readiness")
+                if (
+                    ready.request_id != request_id
+                    or ready.session_id != self.session_id
+                    or ready.checkpoint_id != checkpoint_id
+                ):
+                    raise ProtocolStateError("capture readiness does not match its request")
+                self.client_tick = max(self.client_tick, int(ready.client_tick))
+                self._capture_request = request
+                return
+            if case in {"connection_hello", "connection_ready"}:
+                continue
+            raise ProtocolStateError(
+                f"unexpected {case or 'empty'} message while preparing capture"
+            )
+
+    def finish_capture(
+        self,
+        shutdown_request_id: int,
+        checkpoint_id: str,
+        episode_id: int,
+        reconnect_minecraft: bool,
+    ) -> CaptureArtifact:
+        request = self._capture_request
+        if request is None:
+            raise ProtocolStateError("no replay capture is active")
+        if request.checkpoint_id != checkpoint_id or request.episode_id != episode_id:
+            raise ProtocolStateError("capture completion does not match the active capture")
+        self._transport.send(
+            pb.WireMessage(
+                protocol_version=PROTOCOL_VERSION,
+                shutdown=pb.Shutdown(
+                    protocol_version=PROTOCOL_VERSION,
+                    request_id=shutdown_request_id,
+                    session_id=self.session_id,
+                    episode_id=episode_id,
+                    reason=f"showcase capture complete for {checkpoint_id}",
+                    disconnect_minecraft=True,
+                    reconnect_minecraft=reconnect_minecraft,
+                ),
+            )
+        )
+        while True:
+            message = self._receive()
+            case = message.WhichOneof("payload")
+            if case == "capture_complete":
+                completed = message.capture_complete
+                self._require_version(completed.protocol_version, "capture completion")
+                if (
+                    completed.request_id != request.request_id
+                    or completed.session_id != self.session_id
+                    or completed.checkpoint_id != checkpoint_id
+                    or completed.episode_id != episode_id
+                    or not completed.replay_file
+                    or len(completed.sha256) != 32
+                    or completed.size_bytes <= 0
+                ):
+                    raise ProtocolStateError("capture completion does not match its request")
+                artifact = CaptureArtifact(
+                    request_id=int(completed.request_id),
+                    session_id=str(completed.session_id),
+                    checkpoint_id=str(completed.checkpoint_id),
+                    episode_id=int(completed.episode_id),
+                    replay_file=Path(completed.replay_file),
+                    sha256=bytes(completed.sha256),
+                    size_bytes=int(completed.size_bytes),
+                )
+                self._capture_request = None
+                if reconnect_minecraft:
+                    self._handshake()
+                return artifact
+            raise ProtocolStateError(
+                f"unexpected {case or 'empty'} message while finalizing capture"
+            )
+
     def _receive(self) -> Any:
         message = self._transport.receive()
         self._require_version(message.protocol_version, "wire envelope")
@@ -266,6 +383,7 @@ class BenchmarkConnection:
                         episode_id=self.current_episode_id,
                         reason=reason,
                         disconnect_minecraft=False,
+                        reconnect_minecraft=False,
                     ),
                 )
             )

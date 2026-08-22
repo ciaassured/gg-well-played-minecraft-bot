@@ -2,6 +2,7 @@ package gg.wellplayed.jump.client.core;
 
 import gg.wellplayed.jump.protocol.v1.Action;
 import gg.wellplayed.jump.protocol.v1.ActionRequest;
+import gg.wellplayed.jump.protocol.v1.CaptureRequest;
 import gg.wellplayed.jump.protocol.v1.ClientMode;
 import gg.wellplayed.jump.protocol.v1.ConnectionHello;
 import gg.wellplayed.jump.protocol.v1.EpisodePhase;
@@ -10,6 +11,7 @@ import gg.wellplayed.jump.protocol.v1.EpisodeResult;
 import gg.wellplayed.jump.protocol.v1.EpisodeState;
 import gg.wellplayed.jump.protocol.v1.ErrorCode;
 import gg.wellplayed.jump.protocol.v1.ResetRequest;
+import gg.wellplayed.jump.protocol.v1.Shutdown;
 import gg.wellplayed.jump.protocol.v1.TerminalReason;
 import gg.wellplayed.jump.protocol.v1.WireMessage;
 import java.io.ByteArrayInputStream;
@@ -17,6 +19,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /** Dependency-free test runner used by Gradle and the Nix flake checks. */
 public final class CoreTestMain {
@@ -29,6 +37,7 @@ public final class CoreTestMain {
     resetAndActionSequencingIsStrict();
     actionDeadlineAbortsInputs();
     observationsUseCollisionBoxFront();
+    replayCaptureFindsOnlyFinalizedFile();
     System.out.println("client core assertions: " + assertions);
   }
 
@@ -171,6 +180,79 @@ public final class CoreTestMain {
     close(10.0 - 2.0 * Math.sqrt(2.0), diagonal.signedWallDistance());
     close(1.5, diagonal.relativeFeetHeight());
     close(0.6 / Math.sqrt(2.0), diagonal.laneVelocity());
+  }
+
+  private static void replayCaptureFindsOnlyFinalizedFile() throws Exception {
+    Path directory = Files.createTempDirectory("jump-replay-capture-test");
+    try {
+      Path oldReplay = directory.resolve("old.mcpr");
+      writeReplay(oldReplay);
+      ReplayCaptureCoordinator coordinator = new ReplayCaptureCoordinator(directory);
+      CaptureRequest request =
+          CaptureRequest.newBuilder()
+              .setProtocolVersion(1)
+              .setRequestId(70)
+              .setSessionId("session")
+              .setCheckpointId("untrained")
+              .setEpisodeId(71)
+              .setSeed(ReplayCaptureCoordinator.SHOWCASE_SEED)
+              .build();
+      equal(ReplayCaptureCoordinator.BeginStatus.ACCEPTED, coordinator.begin(request, "session"));
+      equal(ReplayCaptureCoordinator.BeginStatus.IDEMPOTENT, coordinator.begin(request, "session"));
+      throwsCode(
+          ErrorCode.ERROR_CODE_INVALID_MESSAGE,
+          () -> coordinator.begin(request.toBuilder().setCheckpointId("other").build(), "session"));
+
+      coordinator.beginFinalization(
+          Shutdown.newBuilder()
+              .setProtocolVersion(1)
+              .setRequestId(72)
+              .setSessionId("session")
+              .setEpisodeId(71)
+              .setReason("checkpoint showcase complete")
+              .setDisconnectMinecraft(true)
+              .setReconnectMinecraft(true)
+              .build());
+      Files.writeString(directory.resolve("broken.mcpr"), "not a replay", StandardCharsets.UTF_8);
+      Path captured = directory.resolve("captured.mcpr");
+      writeReplay(captured);
+      check(coordinator.pollFinalized().isEmpty());
+      ReplayCaptureCoordinator.Artifact artifact = coordinator.pollFinalized().orElseThrow();
+      equal(captured.toAbsolutePath().normalize(), artifact.replayFile());
+      equal("untrained", artifact.checkpointId());
+      equal(71L, artifact.episodeId());
+      equal(Files.size(captured), artifact.sizeBytes());
+      equal(32, artifact.sha256().length);
+      check(artifact.reconnectMinecraft());
+      check(coordinator.finalizing());
+      coordinator.complete();
+      check(!coordinator.finalizing());
+      check(!ReplayModStatus.startupReady());
+      check(!ReplayModStatus.recording());
+    } finally {
+      try (var paths = Files.walk(directory)) {
+        paths.sorted(Comparator.reverseOrder()).forEach(CoreTestMain::deleteUnchecked);
+      }
+    }
+  }
+
+  private static void writeReplay(Path path) throws IOException {
+    try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(path))) {
+      output.putNextEntry(new ZipEntry("metaData.json"));
+      output.write("{}".getBytes(StandardCharsets.UTF_8));
+      output.closeEntry();
+      output.putNextEntry(new ZipEntry("recording.tmcpr"));
+      output.write(new byte[] {1, 2, 3});
+      output.closeEntry();
+    }
+  }
+
+  private static void deleteUnchecked(Path path) {
+    try {
+      Files.deleteIfExists(path);
+    } catch (IOException exception) {
+      throw new AssertionError("cannot delete test path " + path, exception);
+    }
   }
 
   private static ResetRequest reset(long requestId, long episodeId, long seed) {

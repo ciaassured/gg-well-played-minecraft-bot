@@ -4,6 +4,21 @@
     clientArtifacts,
     ...
   }: let
+    replayConfig = pkgs.writeText "jump-replaymod.json" ''
+      {
+        "core": {
+          "notifications": false,
+          "recordingPath": "./replay_recordings/"
+        },
+        "recording": {
+          "recordServer": true,
+          "indicator": false,
+          "autoStartRecording": true,
+          "autoPostProcess": true,
+          "renameDialog": false
+        }
+      }
+    '';
     launcher = pkgs.writeShellApplication {
       name = "jump-benchmark-headless";
       runtimeInputs = [pkgs.coreutils pkgs.jdk25_headless];
@@ -37,7 +52,11 @@
 
         runtime_dir="''${JUMP_CLIENT_RUNTIME:-$PWD/client-mod/runtime/$mode}"
         game_dir="$runtime_dir/game"
-        mkdir -p "$runtime_dir/HeadlessMC" "$game_dir/mods" "$game_dir/replay_recordings"
+        mkdir -p \
+          "$runtime_dir/HeadlessMC" \
+          "$game_dir/config" \
+          "$game_dir/mods" \
+          "$game_dir/replay_recordings"
 
         cp -f ${clientArtifacts.headlessMc} "$runtime_dir/headlessmc.jar"
         ln -sfn ${clientArtifacts.clientMod}/share/jump-benchmark-client/jump-benchmark-client.jar \
@@ -45,6 +64,7 @@
         ln -sfn ${clientArtifacts.fabricApi} "$game_dir/mods/fabric-api.jar"
         if [[ "$mode" == recording ]]; then
           ln -sfn ${clientArtifacts.replayMod} "$game_dir/mods/replaymod.jar"
+          cp -f ${replayConfig} "$game_dir/config/replaymod.json"
         else
           rm -f "$game_dir/mods/replaymod.jar"
         fi
@@ -77,7 +97,11 @@
         export SDL_AUDIODRIVER=dummy
         export OPENAL_SOFT_LOGLEVEL=0
         cd "$runtime_dir"
-        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Djump.client.mode=$mode -Djump.client.port=64123 -Xms512m -Xmx2g\" --game-args \"--quickPlayMultiplayer 127.0.0.1:25565''${passthrough[*]:+ ''${passthrough[*]}}\""
+        game_args=("''${passthrough[@]}")
+        if [[ "$mode" == training ]]; then
+          game_args=(--quickPlayMultiplayer 127.0.0.1:25565 "''${game_args[@]}")
+        fi
+        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Djump.client.mode=$mode -Djump.client.port=64123 -Djump.client.server=127.0.0.1:25565 -Djump.client.replayDir=$game_dir/replay_recordings -Xms512m -Xmx2g\" --game-args \"''${game_args[*]}\""
         printf '%s\n' "$command_line" | java --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
       '';
     };

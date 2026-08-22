@@ -76,6 +76,18 @@ def main() -> None:
         "ResetRequest",
         {"protocol_version", "request_id", "session_id", "episode_id", "seed"},
     )
+    require_fields(
+        source,
+        "Shutdown",
+        {
+            "protocol_version",
+            "request_id",
+            "session_id",
+            "episode_id",
+            "disconnect_minecraft",
+            "reconnect_minecraft",
+        },
+    )
 
     observation = fields(message_body(source, "Observation"))
     forbidden = {"image", "yaw", "pitch", "inventory", "nearby_blocks", "yrush"}
