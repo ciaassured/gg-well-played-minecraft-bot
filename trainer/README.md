@@ -28,3 +28,8 @@ history, captured `.mcpr` files and metadata, and a reserved video directory.
 Stop the training client and start `client-mod` in recording mode before using
 `capture`; every retained checkpoint is rerun on showcase seed `100000` without
 learning, then Replay Mod is finalized before the next checkpoint reconnects.
+
+A checkpoint evaluation on the `test` suite also evaluates both scripted
+baselines and persists the four final acceptance predicates. If any predicate
+fails, the command prints the report and then exits with status `3`, allowing
+automation to distinguish a rejected checkpoint from a passing evaluation.

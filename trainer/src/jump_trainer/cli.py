@@ -35,6 +35,8 @@ from jump_trainer.run_directory import (
 )
 from jump_trainer.training import train
 
+FINAL_ACCEPTANCE_FAILURE_EXIT_CODE = 3
+
 
 def _add_connection_arguments(
     parser: argparse.ArgumentParser,
@@ -219,6 +221,11 @@ def _capture(arguments: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _final_acceptance_failed(result: dict[str, Any]) -> bool:
+    acceptance = result.get("acceptance")
+    return isinstance(acceptance, dict) and acceptance.get("passed") is False
+
+
 def main() -> None:
     arguments = _parser().parse_args()
     try:
@@ -238,6 +245,13 @@ def main() -> None:
         print(f"jump-trainer: {exception}", file=sys.stderr)
         raise SystemExit(2) from exception
     print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
+    if _final_acceptance_failed(result):
+        print(
+            "jump-trainer: final checkpoint failed acceptance; "
+            f"see {result.get('report_file', 'the JSON report')}",
+            file=sys.stderr,
+        )
+        raise SystemExit(FINAL_ACCEPTANCE_FAILURE_EXIT_CODE)
 
 
 if __name__ == "__main__":
