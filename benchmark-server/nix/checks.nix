@@ -63,6 +63,22 @@
           ${../src/main/java/gg/wellplayed/jump/server/JumpBenchmarkPlugin.java}
         touch "$out"
       '';
+
+      isolated-world-configuration = pkgs.runCommand "jump-server-isolated-world-configuration" {} ''
+        grep -q 'level-type=minecraft:flat' ${../nix/apps.nix}
+        grep -q '"layers".*"minecraft:bedrock".*"height":1' ${../nix/apps.nix}
+        grep -q 'generate-structures=false' ${../nix/apps.nix}
+        grep -q 'spawn-animals=false' ${../nix/apps.nix}
+        grep -q 'spawn-monsters=false' ${../nix/apps.nix}
+        grep -q 'spawn-npcs=false' ${../nix/apps.nix}
+        grep -q 'world.setSpawnLocation(initialSpawn)' \
+          ${../src/main/java/gg/wellplayed/jump/server/ArenaManager.java}
+        grep -q 'event.setSpawnLocation(spawn.clone())' \
+          ${../src/main/java/gg/wellplayed/jump/server/JumpBenchmarkPlugin.java}
+        grep -q 'geometry.endBarrierX()' \
+          ${../src/main/java/gg/wellplayed/jump/server/ArenaManager.java}
+        touch "$out"
+      '';
     };
   };
 }

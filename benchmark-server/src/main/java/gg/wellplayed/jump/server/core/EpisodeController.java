@@ -164,7 +164,9 @@ public final class EpisodeController {
     }
 
     elapsedTicks++;
-    if (kinematics.onGround() && kinematics.laneBack() > geometry.wallFar() + COLLISION_EPSILON) {
+    if (kinematics.onGround()
+        && Math.abs(kinematics.relativeFeetHeight()) < 0.05
+        && kinematics.laneBack() > geometry.wallFar() + COLLISION_EPSILON) {
       return finish(Phase.TERMINAL, EndReason.SUCCESS);
     }
 

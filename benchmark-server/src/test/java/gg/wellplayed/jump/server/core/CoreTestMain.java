@@ -21,6 +21,7 @@ public final class CoreTestMain {
     actionSequencesAreStrict();
     waitsForAnActionBeforeAdvancing();
     detectsSuccess();
+    rejectsGroundBelowTheLandingFloor();
     detectsMissedJump();
     enforcesTimeLimit();
     abortsOnActionDeadline();
@@ -36,6 +37,8 @@ public final class CoreTestMain {
     close(301.0, arena.standingFeetY(), "standing height");
     close(9.7, arena.spawnCenterX(4.0), "minimum gap spawn");
     close(5.7, arena.spawnCenterX(8.0), "maximum gap spawn");
+    check(arena.landingLength() == 9.0, "nine flat landing blocks");
+    check(arena.endBarrierX() == 24, "containment follows the landing floor");
   }
 
   private static void seededGapsAreDeterministicAndUniform() {
@@ -97,6 +100,15 @@ public final class CoreTestMain {
     check(result.finishedNow(), "success finishes");
     check(result.phase() == Phase.TERMINAL, "success terminal");
     check(result.reason() == EndReason.SUCCESS, "success reason");
+  }
+
+  private static void rejectsGroundBelowTheLandingFloor() {
+    EpisodeController controller = activeController();
+    var result =
+        controller.tick(
+            11, new Kinematics(15.61, 15.01, -364.0, 0, 0.1, true), ArenaGeometry.STANDARD);
+    check(!result.finishedNow(), "terrain below the platform cannot count as a landing");
+    check(result.phase() == Phase.ACTIVE, "below-platform ground keeps the episode active");
   }
 
   private static void waitsForAnActionBeforeAdvancing() {

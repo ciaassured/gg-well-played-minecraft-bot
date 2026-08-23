@@ -13,10 +13,13 @@
       force-gamemode=true
       gamemode=adventure
       generate-structures=false
+      generator-settings={"layers":[{"block":"minecraft:bedrock","height":1}],"biome":"minecraft:plains"}
       level-name=jump-benchmark
+      level-type=minecraft:flat
       max-players=1
       motd=One-block jump benchmark
       online-mode=false
+      pause-when-empty-seconds=-1
       player-idle-timeout=0
       server-port=25565
       simulation-distance=5

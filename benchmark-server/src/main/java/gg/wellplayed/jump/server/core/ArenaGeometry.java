@@ -44,4 +44,8 @@ public record ArenaGeometry(
   public double landingLength() {
     return floorMaxX - wallFar() + 1.0;
   }
+
+  public int endBarrierX() {
+    return floorMaxX + 1;
+  }
 }

@@ -24,11 +24,13 @@ import gg.wellplayed.jump.server.core.EpisodeController.ResetCommand;
 import gg.wellplayed.jump.server.core.EpisodeController.ResetStatus;
 import gg.wellplayed.jump.server.core.EpisodeController.TickSnapshot;
 import gg.wellplayed.jump.server.core.SeededGap;
+import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Level;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -57,6 +59,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
   private final ArenaGeometry geometry = ArenaGeometry.STANDARD;
   private final ArenaManager arena = new ArenaManager(geometry);
   private final Map<UUID, PlayerSession> sessions = new HashMap<>();
+  private Location initialSpawn;
   private long serverTick;
 
   @Override
@@ -64,6 +67,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
     getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
     getServer().getMessenger().registerOutgoingPluginChannel(this, CHANNEL);
     getServer().getPluginManager().registerEvents(this, this);
+    initialSpawn = arena.initialize(getServer().getWorlds().getFirst());
     getServer().getScheduler().runTaskTimer(this, this::tick, 1L, 1L);
     getLogger().info("Jump benchmark enabled (protocol v1, Paper 26.2)");
   }
@@ -442,6 +446,14 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
 
   private boolean isBenchmarkPlayer(Entity entity) {
     return entity instanceof Player player && sessions.containsKey(player.getUniqueId());
+  }
+
+  @EventHandler
+  public void onInitialSpawn(AsyncPlayerSpawnLocationEvent event) {
+    Location spawn = initialSpawn;
+    if (spawn != null) {
+      event.setSpawnLocation(spawn.clone());
+    }
   }
 
   @EventHandler

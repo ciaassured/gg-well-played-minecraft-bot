@@ -26,6 +26,17 @@ final class ArenaManager {
     this.geometry = geometry;
   }
 
+  Location initialize(World world) {
+    requireMainThread();
+    configureWorld(world);
+    repairArena(world);
+    Location initialSpawn =
+        new Location(
+            world, geometry.spawnCenterX(6.0), geometry.standingFeetY(), 0.5, -90.0f, 0.0f);
+    world.setSpawnLocation(initialSpawn);
+    return initialSpawn;
+  }
+
   double prepare(Player player, double gap) {
     requireMainThread();
     World world = player.getWorld();
@@ -94,6 +105,7 @@ final class ArenaManager {
     world.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
     world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
     world.setGameRule(GameRule.KEEP_INVENTORY, true);
+    world.setGameRule(GameRule.SPAWN_RADIUS, 0);
     world.setStorm(false);
     world.setThundering(false);
     world.setTime(6000L);
@@ -112,6 +124,9 @@ final class ArenaManager {
       world
           .getBlockAt(geometry.wallX(), geometry.floorY() + 1, z)
           .setType(Material.SMOOTH_STONE, false);
+      for (int y = geometry.floorY() + 1; y <= geometry.floorY() + 3; y++) {
+        world.getBlockAt(geometry.endBarrierX(), y, z).setType(Material.SMOOTH_STONE, false);
+      }
     }
   }
 
