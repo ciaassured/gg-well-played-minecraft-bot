@@ -31,10 +31,10 @@ public final class ReplayRendererMod implements ClientModInitializer {
   private static final Logger LOGGER = LoggerFactory.getLogger("jump-replay-renderer");
   private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(90);
   private static final int REPLAY_WARMUP_TICKS = 60;
-  private static final double CAMERA_X = 20.0;
-  private static final double CAMERA_Y = 66.5;
-  private static final double CAMERA_Z = 0.5;
-  private static final float CAMERA_YAW = 90.0F;
+  private static final double CAMERA_X = 11.5;
+  private static final double CAMERA_Y = 304.0;
+  private static final double CAMERA_Z = -8.0;
+  private static final float CAMERA_YAW = 0.0F;
   private static final float CAMERA_PITCH = 15.0F;
 
   private final AtomicBoolean renderQueued = new AtomicBoolean();
@@ -141,8 +141,8 @@ public final class ReplayRendererMod implements ClientModInitializer {
             handler.getCameraEntity().getY(),
             handler.getCameraEntity().getZ(),
             client.level.players().size(),
-            client.level.getBlockState(new BlockPos(11, 63, 0)),
-            client.level.getBlockState(new BlockPos(14, 64, 0)));
+            client.level.getBlockState(new BlockPos(11, 300, 0)),
+            client.level.getBlockState(new BlockPos(14, 301, 0)));
       }
       return;
     }

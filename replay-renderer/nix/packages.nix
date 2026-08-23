@@ -108,10 +108,10 @@
         start_ms=0
         end_ms=-1
         camera=first-person
-        camera_x="''${JUMP_RENDERER_CAMERA_X:-20.0}"
-        camera_y="''${JUMP_RENDERER_CAMERA_Y:-66.5}"
-        camera_z="''${JUMP_RENDERER_CAMERA_Z:-0.5}"
-        camera_yaw="''${JUMP_RENDERER_CAMERA_YAW:-90.0}"
+        camera_x="''${JUMP_RENDERER_CAMERA_X:-11.5}"
+        camera_y="''${JUMP_RENDERER_CAMERA_Y:-304.0}"
+        camera_z="''${JUMP_RENDERER_CAMERA_Z:--8.0}"
+        camera_yaw="''${JUMP_RENDERER_CAMERA_YAW:-0.0}"
         camera_pitch="''${JUMP_RENDERER_CAMERA_PITCH:-15.0}"
 
         while (($#)); do

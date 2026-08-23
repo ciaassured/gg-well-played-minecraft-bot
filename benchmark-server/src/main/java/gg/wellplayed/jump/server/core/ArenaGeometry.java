@@ -9,7 +9,9 @@ public record ArenaGeometry(
     int laneMaxZ,
     int wallX,
     double playerWidth) {
-  public static final ArenaGeometry STANDARD = new ArenaGeometry(0, 23, 63, -1, 1, 14, 0.6);
+  // A sky platform avoids dependence on the randomly generated terrain at the world origin while
+  // retaining normal Overworld movement, gravity, lighting, and tick behavior.
+  public static final ArenaGeometry STANDARD = new ArenaGeometry(0, 23, 300, -1, 1, 14, 0.6);
 
   public ArenaGeometry {
     if (floorMaxX - floorMinX + 1 < 20) {

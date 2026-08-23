@@ -22,3 +22,6 @@ nix run ./benchmark-server#server
 The server uses offline mode only for the isolated local benchmark. It accepts
 one player on `localhost:25565`, rebuilds the arena on every accepted reset, and
 communicates solely through the `jump:control` Minecraft custom-payload channel.
+The fixed lane is a smooth-stone sky platform at Y=300, above random Overworld
+terrain, so training physics and captured views do not depend on the generated
+landscape at the origin.

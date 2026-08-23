@@ -32,6 +32,8 @@ public final class CoreTestMain {
     check(arena.floorMaxX() - arena.floorMinX() + 1 >= 20, "lane length");
     check(arena.laneMaxZ() - arena.laneMinZ() + 1 == 3, "lane width");
     check(arena.landingLength() >= 4.0, "landing length");
+    check(arena.floorY() == 300, "terrain-independent sky platform");
+    close(301.0, arena.standingFeetY(), "standing height");
     close(9.7, arena.spawnCenterX(4.0), "minimum gap spawn");
     close(5.7, arena.spawnCenterX(8.0), "maximum gap spawn");
   }
