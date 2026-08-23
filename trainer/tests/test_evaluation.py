@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import numpy as np
+
 from jump_trainer.env import MinecraftJumpEnv
 from jump_trainer.evaluation import (
     always_jump_policy,
@@ -7,6 +9,7 @@ from jump_trainer.evaluation import (
     final_passing_result,
     noop_policy,
     promotion_key,
+    scripted_one_jump_policy,
 )
 from jump_trainer.run_directory import atomic_write_json
 from jump_trainer.training import _promotion_metrics
@@ -42,3 +45,17 @@ def test_final_acceptance_checks_returns_and_jump_count() -> None:
     assert result["requirements"]["return_above_always_jump"] is False
     assert result["passed"] is False
     env.close()
+
+
+def test_scripted_smoke_policy_jumps_once_and_resets_between_episodes() -> None:
+    policy = scripted_one_jump_policy()
+    far = np.asarray([0.5, 0, 0, 0, 1, -1], dtype=np.float32)
+    trigger = np.asarray([1.4 / 8.0, 0, 0, 0, 1, -0.9], dtype=np.float32)
+    airborne = np.asarray([1.0 / 8.0, 0.5, 0.2, 0.2, -1, -0.8], dtype=np.float32)
+
+    assert policy(far) == 0
+    assert policy(trigger) == 1
+    assert policy(airborne) == 0
+    assert policy(trigger) == 0
+    assert policy(far) == 0
+    assert policy(trigger) == 1

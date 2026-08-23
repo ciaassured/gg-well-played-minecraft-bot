@@ -56,6 +56,27 @@ def always_jump_policy(_observation: NDArray[np.float32]) -> int:
     return JUMP
 
 
+def scripted_one_jump_policy(trigger_distance: float = 1.5) -> Policy:
+    """Return a reset-aware smoke policy that requests one near-wall jump."""
+
+    if trigger_distance <= 0.0 or trigger_distance > 8.0:
+        raise ValueError("trigger distance must be in (0, 8]")
+    jump_requested = False
+
+    def choose(observation: NDArray[np.float32]) -> int:
+        nonlocal jump_requested
+        if float(observation[5]) <= -1.0:
+            jump_requested = False
+        distance = float(observation[0]) * 8.0
+        on_ground = float(observation[4]) > 0.0
+        if not jump_requested and on_ground and distance <= trigger_distance:
+            jump_requested = True
+            return JUMP
+        return NOOP
+
+    return choose
+
+
 def model_policy(model: Any) -> Policy:
     def choose(observation: NDArray[np.float32]) -> int:
         action, _state = model.predict(observation, deterministic=True)

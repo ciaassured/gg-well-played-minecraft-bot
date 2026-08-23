@@ -27,6 +27,7 @@ from jump_trainer.evaluation import (
     final_passing_result,
     model_policy,
     noop_policy,
+    scripted_one_jump_policy,
 )
 from jump_trainer.run_directory import (
     RunDirectory,
@@ -180,11 +181,13 @@ def _smoke(arguments: argparse.Namespace) -> dict[str, Any]:
     try:
         report = evaluate_policy(
             env,
-            always_jump_policy,
+            scripted_one_jump_policy(),
             (int(arguments.seed),),
-            "always-jump-smoke",
+            "one-jump-smoke",
             "smoke",
         )
+        if report.success_count != 1 or report.episodes[0].jump_requests != 1:
+            raise RuntimeError("scripted one-jump smoke episode did not succeed exactly once")
         return {"smoke": "passed", "evaluation": report.as_dict()}
     finally:
         env.close()

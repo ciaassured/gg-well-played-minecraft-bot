@@ -22,6 +22,9 @@ nix run ./trainer#run -- --run <run-directory>
 nix run ./trainer#capture -- <run-directory>
 ```
 
+`smoke` must complete showcase seed `100000` with one deterministic near-wall
+JUMP request; a timeout, missed jump, or extra request makes the command fail.
+
 Runs are written beneath `trainer/runs` by default. Each run contains its
 configuration, metrics, untrained/latest/best checkpoints, validation promotion
 history, captured `.mcpr` files and metadata, and a reserved video directory.
