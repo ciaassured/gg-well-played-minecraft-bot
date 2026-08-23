@@ -59,3 +59,17 @@ def test_scripted_smoke_policy_jumps_once_and_resets_between_episodes() -> None:
     assert policy(trigger) == 0
     assert policy(far) == 0
     assert policy(trigger) == 1
+
+
+def test_evaluation_reports_visible_progress(capsys) -> None:
+    connection = SimulatedConnection()
+    env = MinecraftJumpEnv(connection_factory=lambda: connection, identifier_base=60_000)
+
+    report = evaluate_policy(env, always_jump_policy, range(12), "candidate", "validation")
+
+    output = capsys.readouterr().err
+    assert "[evaluate] validation/candidate: 0/12 episodes; starting" in output
+    assert "[evaluate] validation/candidate: 10/12 episodes; successes=10" in output
+    assert "[evaluate] validation/candidate: 12/12 episodes; successes=12" in output
+    assert report.success_count == 12
+    env.close()

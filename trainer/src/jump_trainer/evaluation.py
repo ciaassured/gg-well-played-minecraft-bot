@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from statistics import fmean
+from time import monotonic
 from typing import Any
 
 import numpy as np
@@ -13,6 +15,7 @@ from numpy.typing import NDArray
 from jump_trainer.env import JUMP, NOOP, MinecraftJumpEnv
 
 Policy = Callable[[NDArray[np.float32]], int]
+PROGRESS_EPISODE_INTERVAL = 10
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,40 @@ def model_policy(model: Any) -> Policy:
     return choose
 
 
+def _format_duration(seconds: float) -> str:
+    total_seconds = max(0, round(seconds))
+    hours, remainder = divmod(total_seconds, 3_600)
+    minutes, remaining_seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{remaining_seconds:02d}"
+    return f"{minutes:02d}:{remaining_seconds:02d}"
+
+
+def _report_progress(
+    *,
+    policy_id: str,
+    suite: str,
+    completed: int,
+    total: int,
+    successes: int,
+    started_at: float,
+) -> None:
+    if completed == 0:
+        detail = "starting"
+    else:
+        elapsed = monotonic() - started_at
+        remaining = elapsed * (total - completed) / completed
+        detail = (
+            f"successes={successes}, elapsed={_format_duration(elapsed)}, "
+            f"eta={_format_duration(remaining)}"
+        )
+    print(
+        f"[evaluate] {suite}/{policy_id}: {completed}/{total} episodes; {detail}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def evaluate_policy(
     env: MinecraftJumpEnv,
     policy: Policy,
@@ -94,9 +131,21 @@ def evaluate_policy(
 ) -> EvaluationReport:
     """Evaluate without exploration, learning, or replay-buffer mutation."""
 
+    episode_seeds = tuple(int(seed) for seed in seeds)
+    if not episode_seeds:
+        raise ValueError("evaluation requires at least one seed")
     results: list[EpisodeMetrics] = []
-    for seed in seeds:
-        observation, _reset_info = env.reset(seed=int(seed))
+    started_at = monotonic()
+    _report_progress(
+        policy_id=policy_id,
+        suite=suite,
+        completed=0,
+        total=len(episode_seeds),
+        successes=0,
+        started_at=started_at,
+    )
+    for seed in episode_seeds:
+        observation, _reset_info = env.reset(seed=seed)
         total_return = 0.0
         final_info: dict[str, Any] | None = None
         for _tick in range(201):
@@ -110,7 +159,7 @@ def evaluate_policy(
             raise RuntimeError(f"episode seed {seed} exceeded the authoritative time limit")
         results.append(
             EpisodeMetrics(
-                seed=int(seed),
+                seed=seed,
                 success=bool(final_info["success"]),
                 terminal_reason=str(final_info["terminal_reason"]),
                 return_value=total_return,
@@ -118,6 +167,16 @@ def evaluate_policy(
                 jump_requests=int(final_info["jump_requests"]),
             )
         )
+        completed = len(results)
+        if completed % PROGRESS_EPISODE_INTERVAL == 0 or completed == len(episode_seeds):
+            _report_progress(
+                policy_id=policy_id,
+                suite=suite,
+                completed=completed,
+                total=len(episode_seeds),
+                successes=sum(episode.success for episode in results),
+                started_at=started_at,
+            )
 
     successful = [episode for episode in results if episode.success]
     return EvaluationReport(

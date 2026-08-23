@@ -58,6 +58,10 @@ def _versions() -> dict[str, str]:
     }
 
 
+def _log(message: str) -> None:
+    print(f"[train] {message}", file=sys.stderr, flush=True)
+
+
 def _validate_candidate(
     run: RunDirectory,
     env: MinecraftJumpEnv,
@@ -72,6 +76,12 @@ def _validate_candidate(
         suite="validation",
     )
     run.write_json(f"metrics/validation-step-{step:08d}.json", report.as_dict())
+    _log(
+        f"validation at step {step}: {report.success_count}/{len(report.episodes)} "
+        f"successes, mean return {report.mean_return:.4f}, "
+        f"mean completion ticks {report.mean_completion_ticks}, "
+        f"mean successful jumps {report.mean_jump_requests_successful}"
+    )
     return report
 
 
@@ -100,6 +110,7 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
         },
     )
     run.write_json("versions.json", _versions())
+    _log(f"created run directory {run.root.resolve()}")
     env = MinecraftJumpEnv(
         host=config.host,
         port=config.port,
@@ -113,11 +124,13 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
     try:
         model.save(run.untrained_checkpoint)
         model.save(run.latest_checkpoint)
+        _log("saved random untrained and latest checkpoints; validating step 0")
         initial_candidate = run.candidate_checkpoint(0)
         model.save(initial_candidate)
         initial_report = _validate_candidate(run, env, model, 0)
         best_key = promotion_key(initial_report)
         retained = run.promote(initial_candidate, 0)
+        _log(f"promoted initial checkpoint to {retained.relative_to(run.root)}")
         history.append(
             {
                 "step": 0,
@@ -131,12 +144,18 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
         while model.num_timesteps < config.total_timesteps:
             remaining = config.total_timesteps - model.num_timesteps
             chunk = min(config.validation_interval, remaining)
+            target_step = model.num_timesteps + chunk
+            _log(
+                f"learning from step {model.num_timesteps} to {target_step} "
+                f"of {config.total_timesteps}"
+            )
             vector_env = model.get_env()
             if vector_env is None:
                 raise RuntimeError("DQN lost its training environment")
             model.set_env(vector_env, force_reset=True)
             model.learn(total_timesteps=chunk, reset_num_timesteps=False, progress_bar=False)
             step = model.num_timesteps
+            _log(f"reached step {step}; saving and validating candidate")
             candidate = run.candidate_checkpoint(step)
             model.save(candidate)
             model.save(run.latest_checkpoint)
@@ -145,6 +164,7 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
             if best_key is None or key > best_key:
                 best_key = key
                 retained = run.promote(candidate, step)
+                _log(f"promoted step {step} checkpoint to {retained.relative_to(run.root)}")
                 history.append(
                     {
                         "step": step,
@@ -154,6 +174,8 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
                     }
                 )
                 run.write_json("promotion-history.json", history)
+            else:
+                _log(f"step {step} checkpoint did not improve the promotion ordering")
 
         run.write_json(
             "metrics/training-summary.json",
@@ -164,6 +186,10 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
                 "best_checkpoint": str(run.best_checkpoint.relative_to(run.root)),
                 "best_promotion_metrics": (history[-1]["promotion_metrics"] if history else None),
             },
+        )
+        _log(
+            f"training complete at step {model.num_timesteps}; "
+            f"best checkpoint is {run.best_checkpoint.relative_to(run.root)}"
         )
     except InfrastructureError as exception:
         model.save(run.latest_checkpoint)
