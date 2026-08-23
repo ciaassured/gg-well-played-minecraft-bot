@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 from stable_baselines3 import DQN
 
+import jump_trainer.training as training
+from jump_trainer.config import TrainConfig
 from jump_trainer.env import MinecraftJumpEnv
 from jump_trainer.training import TrainingProgressCallback
 from tests.fakes import SimulatedConnection
@@ -54,3 +58,34 @@ def test_deterministic_mock_training_saves_and_loads(tmp_path: Path, capsys) -> 
     assert "exploration=" in output
     assert "eta=00:00" in output
     env.close()
+
+
+def test_interrupted_training_saves_latest_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    connection = SimulatedConnection()
+    env = MinecraftJumpEnv(connection_factory=lambda: connection, identifier_base=70_000)
+    monkeypatch.setattr(training, "MinecraftJumpEnv", lambda **_kwargs: env)
+    monkeypatch.setattr(training, "VALIDATION_SEEDS", (100_000,))
+
+    def interrupt_learning(self: DQN, **_kwargs: object) -> DQN:
+        self.num_timesteps = 7
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(DQN, "learn", interrupt_learning)
+    with pytest.raises(KeyboardInterrupt):
+        training.train(
+            TrainConfig(total_timesteps=10, validation_interval=5),
+            tmp_path / "runs",
+        )
+
+    run = next((tmp_path / "runs").iterdir())
+    assert (run / "checkpoints/latest.zip").is_file()
+    report = json.loads((run / "metrics/training-interrupted.json").read_text())
+    assert report == {
+        "latest_checkpoint": "checkpoints/latest.zip",
+        "status": "interrupted",
+        "timesteps": 7,
+    }
+    output = capsys.readouterr().err
+    assert "[train] run: interrupted; timesteps=7, latest=checkpoints/latest.zip" in output

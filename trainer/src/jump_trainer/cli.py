@@ -247,6 +247,9 @@ def main() -> None:
     except (InfrastructureError, FileNotFoundError, ValueError, RuntimeError) as exception:
         print(f"jump-trainer: {exception}", file=sys.stderr)
         raise SystemExit(2) from exception
+    except KeyboardInterrupt:
+        print("jump-trainer: interrupted by user", file=sys.stderr)
+        raise SystemExit(130) from None
     print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
     if _final_acceptance_failed(result):
         print(

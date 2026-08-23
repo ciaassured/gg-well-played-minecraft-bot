@@ -351,6 +351,22 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
             },
         )
         raise
+    except KeyboardInterrupt:
+        model.save(run.latest_checkpoint)
+        run.write_json(
+            "metrics/training-interrupted.json",
+            {
+                "status": "interrupted",
+                "timesteps": model.num_timesteps,
+                "latest_checkpoint": str(run.latest_checkpoint.relative_to(run.root)),
+            },
+        )
+        _log(
+            "run",
+            f"interrupted; timesteps={model.num_timesteps}, "
+            f"latest={run.latest_checkpoint.relative_to(run.root)}",
+        )
+        raise
     finally:
         env.close()
     return run

@@ -37,6 +37,10 @@ the policy is receiving one decision opportunity per game tick. Checkpoint and
 promotion decisions use the same format. Low CPU utilization is normal because
 each action is synchronized to a real 20 TPS Minecraft client; the small DQN
 update is not the throughput bottleneck.
+Pressing Ctrl-C during learning saves the current in-memory model as
+`checkpoints/latest.zip`, writes `metrics/training-interrupted.json`, and exits
+without a traceback. A later `train` command always starts a new run; use
+`run` or `evaluate` to load a checkpoint from an interrupted run.
 Stop the training client and start `client-mod` in recording mode before using
 `capture`; every retained checkpoint is rerun on showcase seed `100000` without
 learning, then Replay Mod is finalized before the next checkpoint reconnects.
