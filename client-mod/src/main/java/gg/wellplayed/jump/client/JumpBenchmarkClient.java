@@ -65,10 +65,13 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
           Integer.getInteger("jump.client.port", DEFAULT_PORT), new TrainerListener());
 
   private long clientTick;
+  private long lastCompletedClientTick;
+  private long actionAppliedClientTick;
   private long lastHelloAttemptTick;
   private long lastStabilityLogTick;
   private ConnectionHello hello;
   private ConnectionReady connectionReady;
+  private WireMessage pendingPaperAction;
   private boolean jumpPressedThisTick;
   private boolean recordingEnabled = mode == ClientMode.CLIENT_MODE_RECORDING;
   private boolean recordingConnectRequested;
@@ -273,8 +276,14 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
               "Paper episode {} is ready; checking client reset state",
               message.getEpisodeReady().getEpisodeId());
         }
-        case EPISODE_STATE -> sequencer.receiveState(message.getEpisodeState());
-        case EPISODE_RESULT -> sequencer.receiveResult(message.getEpisodeResult());
+        case EPISODE_STATE -> {
+          sequencer.receiveState(message.getEpisodeState());
+          emitObservationIfActionTickComplete(client);
+        }
+        case EPISODE_RESULT -> {
+          sequencer.receiveResult(message.getEpisodeResult());
+          emitObservationIfActionTickComplete(client);
+        }
         case ERROR -> {
           releaseAll(client);
           sendTrainerIfConnected(message, client);
@@ -351,6 +360,7 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     }
 
     inputs.apply(action.getAction());
+    actionAppliedClientTick = clientTick;
     jumpPressedThisTick = action.getAction() == Action.ACTION_JUMP;
     syncInputs(client);
     ActionApplied applied =
@@ -365,15 +375,21 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
             .setRequestedAction(action.getAction())
             .build();
     WireMessage envelope = envelope().setActionApplied(applied).build();
-    sendPaper(client, envelope);
+    pendingPaperAction = envelope;
     sendTrainerIfConnected(envelope, client);
   }
 
   private void endTick(Minecraft client) {
+    lastCompletedClientTick = clientTick;
     if (jumpPressedThisTick && client.options != null) {
       inputs.finishTick();
       syncInputs(client);
       jumpPressedThisTick = false;
+    }
+    if (pendingPaperAction != null) {
+      WireMessage completedAction = pendingPaperAction;
+      pendingPaperAction = null;
+      sendPaper(client, completedAction);
     }
     if (client.player == null) {
       releaseAll(client);
@@ -414,13 +430,18 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
       return;
     }
 
-    if (sequencer.observationDue()) {
-      EpisodeState state = sequencer.completeObservation(clientTick);
-      sendObservation(client, state);
-      if (state.getPhase() == EpisodePhase.EPISODE_PHASE_TERMINAL
-          || state.getPhase() == EpisodePhase.EPISODE_PHASE_ABORTED) {
-        releaseAll(client);
-      }
+    emitObservationIfActionTickComplete(client);
+  }
+
+  private void emitObservationIfActionTickComplete(Minecraft client) {
+    if (!sequencer.observationDue() || lastCompletedClientTick < actionAppliedClientTick) {
+      return;
+    }
+    EpisodeState state = sequencer.completeObservation(clientTick);
+    sendObservation(client, state);
+    if (state.getPhase() == EpisodePhase.EPISODE_PHASE_TERMINAL
+        || state.getPhase() == EpisodePhase.EPISODE_PHASE_ABORTED) {
+      releaseAll(client);
     }
   }
 
@@ -599,6 +620,7 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
   }
 
   private void releaseAll(Minecraft client) {
+    pendingPaperAction = null;
     inputs.releaseAll();
     syncInputs(client);
   }

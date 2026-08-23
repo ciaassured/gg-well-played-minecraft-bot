@@ -269,6 +269,12 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
           "action rejected: " + status.name().toLowerCase());
       return;
     }
+    TickSnapshot snapshot =
+        session.controller.tick(serverTick, arena.observe(session.player), geometry);
+    sendState(session, snapshot);
+    if (snapshot.finishedNow()) {
+      sendResult(session, snapshot);
+    }
   }
 
   private void handleShutdown(Player player, Shutdown shutdown) {

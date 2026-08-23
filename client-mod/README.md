@@ -8,11 +8,13 @@ manage the Paper process.
 The client listens only on `127.0.0.1:64123`. It forwards versioned protobuf
 reset and episode messages on `jump:control`, applies one `NOOP` or `JUMP` on
 the next client tick, holds forward during active episodes, and releases every
-controlled input on terminal states and transport failures. Training mode does
-not load Replay Mod; recording mode loads pinned Replay Mod 2.6.27. The
-recording client waits for Replay Mod startup before joining, disables rename
-prompts, finalizes one valid `.mcpr` per requested checkpoint, and reconnects
-only when the trainer says another capture follows.
+controlled input on terminal states and transport failures. It relays the
+applied action to Paper after that movement tick has completed, so Paper checks
+the resulting server-side position without adding another idle client tick.
+Training mode does not load Replay Mod; recording mode loads pinned Replay Mod
+2.6.27. The recording client waits for Replay Mod startup before joining,
+disables rename prompts, finalizes one valid `.mcpr` per requested checkpoint,
+and reconnects only when the trainer says another capture follows.
 
 ```console
 nix develop ./client-mod
