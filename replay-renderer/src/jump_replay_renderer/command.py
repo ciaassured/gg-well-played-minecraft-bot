@@ -12,6 +12,7 @@ class RenderOptions:
     bitrate: int = 4_000_000
     start_ms: int = 0
     end_ms: int = -1
+    camera: str = "first-person"
 
     def validate(self) -> None:
         if not 160 <= self.width <= 7680 or not 90 <= self.height <= 4320:
@@ -24,6 +25,8 @@ class RenderOptions:
             raise ValueError("bitrate is outside the supported range")
         if self.start_ms < 0 or (self.end_ms >= 0 and self.end_ms <= self.start_ms):
             raise ValueError("render time range is invalid")
+        if self.camera not in {"first-person", "third-person", "fixed"}:
+            raise ValueError("camera must be first-person, third-person, or fixed")
 
 
 def minecraft_command(
@@ -54,4 +57,6 @@ def minecraft_command(
         str(options.start_ms),
         "--end-ms",
         str(options.end_ms),
+        "--camera",
+        options.camera,
     ]

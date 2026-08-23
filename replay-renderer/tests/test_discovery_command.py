@@ -35,11 +35,15 @@ class DiscoveryAndCommandTests(unittest.TestCase):
         )
         self.assertEqual(command[0], "/tool with space")
         self.assertIn("/replay with space.mcpr", command)
-        self.assertEqual(command[-2:], ["--end-ms", "2000"])
+        self.assertEqual(command[-4:], ["--end-ms", "2000", "--camera", "first-person"])
 
     def test_rejects_odd_mp4_dimensions(self) -> None:
         with self.assertRaisesRegex(ValueError, "even"):
             RenderOptions(width=321, height=180).validate()
+
+    def test_rejects_unknown_camera_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "camera"):
+            RenderOptions(camera="underground").validate()
 
 
 if __name__ == "__main__":

@@ -107,6 +107,7 @@
         bitrate=4000000
         start_ms=0
         end_ms=-1
+        camera=first-person
         camera_x="''${JUMP_RENDERER_CAMERA_X:-20.0}"
         camera_y="''${JUMP_RENDERER_CAMERA_Y:-66.5}"
         camera_z="''${JUMP_RENDERER_CAMERA_Z:-0.5}"
@@ -124,12 +125,17 @@
             --bitrate) bitrate="''${2:?--bitrate requires a value}"; shift 2 ;;
             --start-ms) start_ms="''${2:?--start-ms requires a value}"; shift 2 ;;
             --end-ms) end_ms="''${2:?--end-ms requires a value}"; shift 2 ;;
+            --camera) camera="''${2:?--camera requires a value}"; shift 2 ;;
             *) echo "unknown renderer argument: $1" >&2; exit 2 ;;
           esac
         done
 
         if [[ -z "$input" || -z "$output" || -z "$status" ]]; then
           echo "--input, --output, and --status are required" >&2
+          exit 2
+        fi
+        if [[ "$camera" != first-person && "$camera" != third-person && "$camera" != fixed ]]; then
+          echo "--camera must be first-person, third-person, or fixed" >&2
           exit 2
         fi
 
@@ -187,7 +193,7 @@
         export LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
         export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
         cd "$runtime_dir"
-        command_line="launch fabric:26.2 --uid 0.19.3 -offline -keep --jvm \"-Djava.awt.headless=true -Djump.renderer.input=$job_dir/input.mcpr -Djump.renderer.output=$job_dir/output.mp4 -Djump.renderer.status=$job_dir/status.txt -Djump.renderer.ffmpeg=${pkgs.ffmpeg}/bin/ffmpeg -Djump.renderer.width=$width -Djump.renderer.height=$height -Djump.renderer.fps=$fps -Djump.renderer.bitrate=$bitrate -Djump.renderer.startMillis=$start_ms -Djump.renderer.endMillis=$end_ms -Djump.renderer.cameraX=$camera_x -Djump.renderer.cameraY=$camera_y -Djump.renderer.cameraZ=$camera_z -Djump.renderer.cameraYaw=$camera_yaw -Djump.renderer.cameraPitch=$camera_pitch -Xms512m -Xmx3g\" --game-args \"--width $width --height $height\""
+        command_line="launch fabric:26.2 --uid 0.19.3 -offline -keep --jvm \"-Djava.awt.headless=true -Djump.renderer.input=$job_dir/input.mcpr -Djump.renderer.output=$job_dir/output.mp4 -Djump.renderer.status=$job_dir/status.txt -Djump.renderer.ffmpeg=${pkgs.ffmpeg}/bin/ffmpeg -Djump.renderer.width=$width -Djump.renderer.height=$height -Djump.renderer.fps=$fps -Djump.renderer.bitrate=$bitrate -Djump.renderer.startMillis=$start_ms -Djump.renderer.endMillis=$end_ms -Djump.renderer.camera=$camera -Djump.renderer.cameraX=$camera_x -Djump.renderer.cameraY=$camera_y -Djump.renderer.cameraZ=$camera_z -Djump.renderer.cameraYaw=$camera_yaw -Djump.renderer.cameraPitch=$camera_pitch -Xms512m -Xmx3g\" --game-args \"--width $width --height $height\""
         set +e
         printf '%s\n' "$command_line" \
           | xvfb-run -a -s "-screen 0 ''${width}x''${height}x24 +extension GLX +render -noreset" \

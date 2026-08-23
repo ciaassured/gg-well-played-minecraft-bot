@@ -27,7 +27,10 @@ duration; all results and failures are recorded in `render-manifest.json`.
 
 The first run downloads the pinned Minecraft runtime into
 `replay-renderer/runtime`. Set `JUMP_RENDERER_RUNTIME` to move that mutable cache.
-Rendering is sequential and uses a fixed side-on arena camera. Optional
-`--width`, `--height`, `--fps`, `--bitrate`, `--start-ms`, `--end-ms`, and
-`--output-dir` flags are available for diagnostics; the documented command
-renders every retained replay in full.
+Rendering is sequential and follows the one recorded benchmark player in first
+person by default using Replay Mod spectator keyframes, so the view cannot be
+clipped into a hard-coded world position. `--camera third-person` selects the
+vanilla following view, while `--camera fixed` retains the diagnostic fixed
+arena camera. Optional `--width`, `--height`, `--fps`, `--bitrate`,
+`--start-ms`, `--end-ms`, and `--output-dir` flags are also available; the
+documented command renders every retained replay in full.

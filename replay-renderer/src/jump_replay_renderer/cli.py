@@ -29,6 +29,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bitrate", type=int, default=4_000_000)
     parser.add_argument("--start-ms", type=int, default=0)
     parser.add_argument("--end-ms", type=int, default=-1)
+    parser.add_argument(
+        "--camera",
+        choices=("first-person", "third-person", "fixed"),
+        default="first-person",
+        help="follow the recorded player or use the diagnostic fixed camera",
+    )
     parser.add_argument("--timeout", type=float, default=1_800.0)
     return parser
 
@@ -57,6 +63,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         bitrate=args.bitrate,
         start_ms=args.start_ms,
         end_ms=args.end_ms,
+        camera=args.camera,
     )
     try:
         options.validate()
@@ -98,6 +105,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     bitrate=options.bitrate,
                     start_ms=options.start_ms,
                     end_ms=effective_end,
+                    camera=options.camera,
                 ),
                 launcher=launcher,
                 ffprobe=ffprobe,
@@ -126,6 +134,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "bitrate": options.bitrate,
             "start_ms": options.start_ms,
             "end_ms": options.end_ms,
+            "camera": options.camera,
         },
         "renders": successes,
         "failures": failures,

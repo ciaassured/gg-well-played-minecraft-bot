@@ -44,6 +44,8 @@
         grep -q 'runPostStartup' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
         grep -q 'REPLAY_WARMUP_TICKS' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
         grep -q 'setDefaultInterpolatorType(InterpolatorType.LINEAR)' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
+        grep -q 'CameraType.FIRST_PERSON' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
+        grep -q 'target.getId()' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
         grep -q 'VideoRenderer' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
         grep -q 'MP4_CUSTOM' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
         grep -q '"replaymod": "26.2-2.6.27"' ${../src/main/resources/fabric.mod.json}
@@ -51,6 +53,7 @@
         grep -q 'hmc.offline=true' ${./packages.nix}
         grep -q 'hmc.check.xvfb=true' ${./packages.nix}
         grep -q -- '--width \$width --height \$height' ${./packages.nix}
+        grep -q -- '-Djump.renderer.camera=\$camera' ${./packages.nix}
         grep -q 'ALSOFT_DRIVERS=null' ${./packages.nix}
         grep -q 'gamma:1.0' ${./packages.nix}
         grep -q 'LIBGL_ALWAYS_SOFTWARE=1' ${./packages.nix}

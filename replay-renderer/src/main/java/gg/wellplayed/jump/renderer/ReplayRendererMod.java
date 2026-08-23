@@ -15,11 +15,14 @@ import gg.wellplayed.jump.renderer.core.StatusFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.player.Player;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -161,14 +164,7 @@ public final class ReplayRendererMod implements ClientModInitializer {
       SPTimeline path = new SPTimeline();
       path.setDefaultInterpolatorType(InterpolatorType.LINEAR);
       long timelineEnd = plan.timelineDurationMillis();
-      double cameraX = doubleProperty("jump.renderer.cameraX", CAMERA_X);
-      double cameraY = doubleProperty("jump.renderer.cameraY", CAMERA_Y);
-      double cameraZ = doubleProperty("jump.renderer.cameraZ", CAMERA_Z);
-      float cameraYaw = (float) doubleProperty("jump.renderer.cameraYaw", CAMERA_YAW);
-      float cameraPitch = (float) doubleProperty("jump.renderer.cameraPitch", CAMERA_PITCH);
-      path.addPositionKeyframe(0L, cameraX, cameraY, cameraZ, cameraYaw, cameraPitch, 0.0F, -1);
-      path.addPositionKeyframe(
-          timelineEnd, cameraX, cameraY, cameraZ, cameraYaw, cameraPitch, 0.0F, -1);
+      configureCameraPath(path, handler, timelineEnd);
       path.addTimeKeyframe(0L, plan.startMillis());
       path.addTimeKeyframe(timelineEnd, plan.endMillis());
       path.getPositionPath().setActive(true);
@@ -302,6 +298,70 @@ public final class ReplayRendererMod implements ClientModInitializer {
     } catch (NumberFormatException failure) {
       throw new IllegalArgumentException(name + " must be a number", failure);
     }
+  }
+
+  private static void configureCameraPath(
+      SPTimeline path, ReplayHandler handler, long timelineEnd) {
+    String mode = System.getProperty("jump.renderer.camera", "first-person");
+    if (mode.equals("fixed")) {
+      double cameraX = doubleProperty("jump.renderer.cameraX", CAMERA_X);
+      double cameraY = doubleProperty("jump.renderer.cameraY", CAMERA_Y);
+      double cameraZ = doubleProperty("jump.renderer.cameraZ", CAMERA_Z);
+      float cameraYaw = (float) doubleProperty("jump.renderer.cameraYaw", CAMERA_YAW);
+      float cameraPitch = (float) doubleProperty("jump.renderer.cameraPitch", CAMERA_PITCH);
+      path.addPositionKeyframe(0L, cameraX, cameraY, cameraZ, cameraYaw, cameraPitch, 0.0F, -1);
+      path.addPositionKeyframe(
+          timelineEnd, cameraX, cameraY, cameraZ, cameraYaw, cameraPitch, 0.0F, -1);
+      LOGGER.info("Rendering with fixed camera at ({}, {}, {})", cameraX, cameraY, cameraZ);
+      return;
+    }
+
+    CameraType cameraType =
+        switch (mode) {
+          case "first-person" -> CameraType.FIRST_PERSON;
+          case "third-person" -> CameraType.THIRD_PERSON_BACK;
+          default ->
+              throw new IllegalArgumentException(
+                  "jump.renderer.camera must be first-person, third-person, or fixed");
+        };
+    Minecraft client = Minecraft.getInstance();
+    if (client == null || client.level == null) {
+      throw new IllegalStateException("replay world is unavailable while selecting its player");
+    }
+    List<Player> recordedPlayers =
+        client.level.players().stream()
+            .filter(player -> player != handler.getCameraEntity())
+            .map(player -> (Player) player)
+            .toList();
+    if (recordedPlayers.size() != 1) {
+      throw new IllegalStateException(
+          "expected exactly one recorded player, found " + recordedPlayers.size());
+    }
+    Player target = recordedPlayers.getFirst();
+    client.options.setCameraType(cameraType);
+    path.addPositionKeyframe(
+        0L,
+        target.getX(),
+        target.getY(),
+        target.getZ(),
+        target.getYRot(),
+        target.getXRot(),
+        0.0F,
+        target.getId());
+    path.addPositionKeyframe(
+        timelineEnd,
+        target.getX(),
+        target.getY(),
+        target.getZ(),
+        target.getYRot(),
+        target.getXRot(),
+        0.0F,
+        target.getId());
+    LOGGER.info(
+        "Rendering {} camera following recorded player {} (entity {})",
+        mode,
+        target.getName().getString(),
+        target.getId());
   }
 
   private static String describe(Throwable failure) {
