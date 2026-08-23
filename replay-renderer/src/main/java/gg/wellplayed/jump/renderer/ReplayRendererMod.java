@@ -30,7 +30,9 @@ import org.slf4j.LoggerFactory;
 public final class ReplayRendererMod implements ClientModInitializer {
   private static final Logger LOGGER = LoggerFactory.getLogger("jump-replay-renderer");
   private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(90);
-  private static final int REPLAY_WARMUP_TICKS = 60;
+  private static final int REPLAY_WARMUP_TICKS = 3;
+  private static final BlockPos ARENA_FLOOR_POSITION = new BlockPos(11, 300, 0);
+  private static final BlockPos ARENA_WALL_POSITION = new BlockPos(14, 301, 0);
   private static final double CAMERA_X = 11.5;
   private static final double CAMERA_Y = 304.0;
   private static final double CAMERA_Z = -8.0;
@@ -124,6 +126,12 @@ public final class ReplayRendererMod implements ClientModInitializer {
       replayReadyTicks = 0;
       return;
     }
+    // Fast policies produce replays only a few seconds long. Wait for the actual scene instead of
+    // consuming most of the replay on a fixed delay that can reach playback's end and stop ticks.
+    if (!replaySceneReady(client, handler)) {
+      replayReadyTicks = 0;
+      return;
+    }
     replayReadyTicks++;
     if (replayReadyTicks <= REPLAY_WARMUP_TICKS) {
       if (replayReadyTicks == 1) {
@@ -141,8 +149,8 @@ public final class ReplayRendererMod implements ClientModInitializer {
             handler.getCameraEntity().getY(),
             handler.getCameraEntity().getZ(),
             client.level.players().size(),
-            client.level.getBlockState(new BlockPos(11, 300, 0)),
-            client.level.getBlockState(new BlockPos(14, 301, 0)));
+            client.level.getBlockState(ARENA_FLOOR_POSITION),
+            client.level.getBlockState(ARENA_WALL_POSITION));
       }
       return;
     }
@@ -328,11 +336,7 @@ public final class ReplayRendererMod implements ClientModInitializer {
     if (client == null || client.level == null) {
       throw new IllegalStateException("replay world is unavailable while selecting its player");
     }
-    List<Player> recordedPlayers =
-        client.level.players().stream()
-            .filter(player -> player != handler.getCameraEntity())
-            .map(player -> (Player) player)
-            .toList();
+    List<Player> recordedPlayers = recordedPlayers(client, handler);
     if (recordedPlayers.size() != 1) {
       throw new IllegalStateException(
           "expected exactly one recorded player, found " + recordedPlayers.size());
@@ -362,6 +366,19 @@ public final class ReplayRendererMod implements ClientModInitializer {
         mode,
         target.getName().getString(),
         target.getId());
+  }
+
+  private static boolean replaySceneReady(Minecraft client, ReplayHandler handler) {
+    return recordedPlayers(client, handler).size() == 1
+        && !client.level.getBlockState(ARENA_FLOOR_POSITION).isAir()
+        && !client.level.getBlockState(ARENA_WALL_POSITION).isAir();
+  }
+
+  private static List<Player> recordedPlayers(Minecraft client, ReplayHandler handler) {
+    return client.level.players().stream()
+        .filter(player -> player != handler.getCameraEntity())
+        .map(player -> (Player) player)
+        .toList();
   }
 
   private static String describe(Throwable failure) {
