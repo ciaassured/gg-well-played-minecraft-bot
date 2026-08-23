@@ -1,0 +1,34 @@
+name: Nix checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check ${{ matrix.flake }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        flake:
+          - protocol
+          - benchmark-server
+          - client-mod
+          - trainer
+          - replay-renderer
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Check flake
+        run: nix flake check --abort-on-warn --all-systems --no-update-lock-file --print-build-logs "./${{ matrix.flake }}"
