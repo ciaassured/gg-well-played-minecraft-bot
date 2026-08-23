@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "jump_replay_renderer",
+  "version": "${version}",
+  "name": "One-Block Jump Replay Renderer",
+  "description": "Unattended Replay Mod playback and MP4 rendering for jump benchmark captures.",
+  "authors": ["gg-well-played"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "gg.wellplayed.jump.renderer.ReplayRendererMod"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "jump_replay_renderer.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": "*",
+    "replaymod": "26.2-2.6.27"
+  }
+}
