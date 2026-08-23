@@ -121,7 +121,8 @@ The commands deliberately have separate effects:
 - `run` loads a checkpoint and controls requested episodes without learning.
 - `capture` re-runs the untrained and every promoted checkpoint on showcase seed
   `100000`, coordinating one finalized Replay Mod recording per checkpoint. It
-  does not reproduce historical training episodes and does not render video.
+  first replaces any idle recording session that predates the capture request,
+  does not reproduce historical training episodes, and does not render video.
 - `render` validates finalized recordings and converts each one to a playable
   MP4 without starting any live benchmark service.
 

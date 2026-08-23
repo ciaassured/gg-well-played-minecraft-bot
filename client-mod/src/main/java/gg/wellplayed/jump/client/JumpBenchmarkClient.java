@@ -15,6 +15,7 @@ import gg.wellplayed.jump.protocol.v1.ActionApplied;
 import gg.wellplayed.jump.protocol.v1.ActionRequest;
 import gg.wellplayed.jump.protocol.v1.CaptureComplete;
 import gg.wellplayed.jump.protocol.v1.CaptureReady;
+import gg.wellplayed.jump.protocol.v1.CaptureRequest;
 import gg.wellplayed.jump.protocol.v1.ClientMode;
 import gg.wellplayed.jump.protocol.v1.ConnectionHello;
 import gg.wellplayed.jump.protocol.v1.ConnectionReady;
@@ -24,6 +25,7 @@ import gg.wellplayed.jump.protocol.v1.EpisodeState;
 import gg.wellplayed.jump.protocol.v1.ErrorCode;
 import gg.wellplayed.jump.protocol.v1.Observation;
 import gg.wellplayed.jump.protocol.v1.ProtocolError;
+import gg.wellplayed.jump.protocol.v1.Shutdown;
 import gg.wellplayed.jump.protocol.v1.TerminalReason;
 import gg.wellplayed.jump.protocol.v1.WireMessage;
 import java.io.IOException;
@@ -77,6 +79,9 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
   private boolean recordingConnectRequested;
   private boolean replayStartupCallbackRegistered;
   private boolean replayStartupComplete;
+  private CaptureRequest pendingCaptureRequest;
+  private boolean preparingCaptureBoundary;
+  private boolean recordingPreparedForCapture;
 
   @Override
   public void onInitializeClient() {
@@ -208,23 +213,16 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
                 ErrorCode.ERROR_CODE_NOT_RECORDING,
                 "Replay Mod has not started recording this connection");
           }
-          try {
-            captures.begin(message.getCaptureRequest(), sequencer.sessionId());
-          } catch (IOException exception) {
+          if (pendingCaptureRequest != null) {
             throw new ProtocolViolation(
-                ErrorCode.ERROR_CODE_INTERNAL,
-                "cannot inspect Replay Mod directory: " + exception.getMessage());
+                ErrorCode.ERROR_CODE_SEQUENCE_VIOLATION,
+                "another replay capture is being prepared");
           }
-          sendTrainer(
-              envelope()
-                  .setCaptureReady(
-                      CaptureReady.newBuilder()
-                          .setProtocolVersion(PROTOCOL_VERSION)
-                          .setRequestId(message.getCaptureRequest().getRequestId())
-                          .setSessionId(sequencer.sessionId())
-                          .setCheckpointId(message.getCaptureRequest().getCheckpointId())
-                          .setClientTick(clientTick))
-                  .build());
+          if (recordingPreparedForCapture) {
+            beginPreparedCapture(message.getCaptureRequest());
+          } else {
+            prepareCaptureBoundary(message.getCaptureRequest(), client);
+          }
         }
         default ->
             throw new ProtocolViolation(
@@ -268,6 +266,7 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
           }
           connectionReady = ready;
           sendTrainerIfConnected(message, client);
+          beginPendingCaptureIfReady(client);
         }
         case EPISODE_READY -> {
           sequencer.receiveReady(message.getEpisodeReady());
@@ -327,6 +326,7 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
         && replayStartupComplete) {
       connectRecordingClient(client);
     }
+    beginPendingCaptureIfReady(client);
     inputs.finishTick();
     syncInputs(client);
     jumpPressedThisTick = false;
@@ -527,7 +527,86 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     }
   }
 
+  private void prepareCaptureBoundary(CaptureRequest request, Minecraft client)
+      throws ProtocolViolation {
+    try {
+      captures.begin(request, sequencer.sessionId());
+      captures.beginFinalization(
+          Shutdown.newBuilder()
+              .setProtocolVersion(PROTOCOL_VERSION)
+              .setRequestId(request.getRequestId())
+              .setSessionId(sequencer.sessionId())
+              .setEpisodeId(request.getEpisodeId())
+              .setReason("prepare clean replay capture for " + request.getCheckpointId())
+              .setDisconnectMinecraft(true)
+              .setReconnectMinecraft(true)
+              .build());
+    } catch (IOException exception) {
+      captures.abort();
+      throw new ProtocolViolation(
+          ErrorCode.ERROR_CODE_INTERNAL,
+          "cannot inspect Replay Mod directory: " + exception.getMessage());
+    }
+    pendingCaptureRequest = request;
+    preparingCaptureBoundary = true;
+    recordingEnabled = true;
+    recordingPreparedForCapture = false;
+    releaseAll(client);
+    sequencer.abort();
+    LOGGER.info(
+        "Finalizing the pre-capture Replay Mod session before {}", request.getCheckpointId());
+    client
+        .getConnection()
+        .getConnection()
+        .disconnect(
+            net.minecraft.network.chat.Component.literal(
+                "prepare clean replay capture for " + request.getCheckpointId()));
+  }
+
+  private void beginPendingCaptureIfReady(Minecraft client) {
+    if (pendingCaptureRequest == null
+        || !recordingPreparedForCapture
+        || connectionReady == null
+        || !ReplayModStatus.recording()) {
+      return;
+    }
+    try {
+      beginPreparedCapture(pendingCaptureRequest);
+      pendingCaptureRequest = null;
+    } catch (ProtocolViolation exception) {
+      pendingCaptureRequest = null;
+      recordingPreparedForCapture = false;
+      releaseAll(client);
+      sendError(client, exception.code(), exception.getMessage(), false);
+    }
+  }
+
+  private void beginPreparedCapture(CaptureRequest originalRequest) throws ProtocolViolation {
+    CaptureRequest request =
+        originalRequest.toBuilder().setSessionId(sequencer.sessionId()).build();
+    try {
+      captures.begin(request, sequencer.sessionId());
+    } catch (IOException exception) {
+      throw new ProtocolViolation(
+          ErrorCode.ERROR_CODE_INTERNAL,
+          "cannot inspect Replay Mod directory: " + exception.getMessage());
+    }
+    recordingPreparedForCapture = false;
+    sendTrainer(
+        envelope()
+            .setCaptureReady(
+                CaptureReady.newBuilder()
+                    .setProtocolVersion(PROTOCOL_VERSION)
+                    .setRequestId(request.getRequestId())
+                    .setSessionId(sequencer.sessionId())
+                    .setCheckpointId(request.getCheckpointId())
+                    .setClientTick(clientTick))
+            .build());
+    LOGGER.info("Replay capture {} began in a clean recording session", request.getCheckpointId());
+  }
+
   private void finalizeReplayAsync(Minecraft client) {
+    boolean boundaryOnly = preparingCaptureBoundary;
     Thread.ofVirtual()
         .name("jump-replay-finalizer")
         .start(
@@ -538,6 +617,24 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
                   Optional<ReplayCaptureCoordinator.Artifact> completed = captures.pollFinalized();
                   if (completed.isPresent()) {
                     ReplayCaptureCoordinator.Artifact artifact = completed.orElseThrow();
+                    if (boundaryOnly) {
+                      captures.complete();
+                      LOGGER.info(
+                          "Finalized pre-capture replay boundary at {}", artifact.replayFile());
+                      client.execute(
+                          () -> {
+                            preparingCaptureBoundary = false;
+                            if (!trainer.connected()) {
+                              pendingCaptureRequest = null;
+                              recordingEnabled = false;
+                              recordingPreparedForCapture = false;
+                              return;
+                            }
+                            recordingPreparedForCapture = true;
+                            connectRecordingClient(client);
+                          });
+                      return;
+                    }
                     sendTrainer(
                         envelope()
                             .setCaptureComplete(
@@ -556,9 +653,13 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
                         "Finalized replay for {} at {}",
                         artifact.checkpointId(),
                         artifact.replayFile());
-                    if (artifact.reconnectMinecraft() && trainer.connected()) {
-                      client.execute(() -> connectRecordingClient(client));
-                    }
+                    client.execute(
+                        () -> {
+                          recordingPreparedForCapture = artifact.reconnectMinecraft();
+                          if (artifact.reconnectMinecraft() && trainer.connected()) {
+                            connectRecordingClient(client);
+                          }
+                        });
                     return;
                   }
                   Thread.sleep(100L);
@@ -575,14 +676,18 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
 
   private void reportCaptureFailure(Minecraft client, String description) {
     captures.abort();
-    recordingEnabled = false;
     client.execute(
-        () ->
-            sendError(
-                client,
-                ErrorCode.ERROR_CODE_INTERNAL,
-                description == null ? "replay finalization failed" : description,
-                false));
+        () -> {
+          pendingCaptureRequest = null;
+          preparingCaptureBoundary = false;
+          recordingEnabled = false;
+          recordingPreparedForCapture = false;
+          sendError(
+              client,
+              ErrorCode.ERROR_CODE_INTERNAL,
+              description == null ? "replay finalization failed" : description,
+              false);
+        });
   }
 
   private void connectRecordingClient(Minecraft client) {
@@ -689,7 +794,10 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
                 sequencer.abort();
                 boolean captureWasActive = captures.active();
                 captures.abort();
+                pendingCaptureRequest = null;
+                preparingCaptureBoundary = false;
                 recordingEnabled = false;
+                recordingPreparedForCapture = false;
                 if (captureWasActive && client.getConnection() != null) {
                   client
                       .getConnection()

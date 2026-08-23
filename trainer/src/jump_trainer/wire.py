@@ -130,11 +130,15 @@ class BenchmarkConnection:
     ) -> BenchmarkConnection:
         return cls(SocketMessageTransport.connect(host, port, timeout), expected_mode)
 
-    def _handshake(self) -> None:
+    def _handshake(self, initial_message: Any | None = None) -> None:
         hello: Any | None = None
         ready: Any | None = None
         while hello is None or ready is None:
-            message = self._receive()
+            if initial_message is None:
+                message = self._receive()
+            else:
+                message = initial_message
+                initial_message = None
             case = message.WhichOneof("payload")
             if case == "connection_hello":
                 hello = message.connection_hello
@@ -289,9 +293,17 @@ class BenchmarkConnection:
                 ):
                     raise ProtocolStateError("capture readiness does not match its request")
                 self.client_tick = max(self.client_tick, int(ready.client_tick))
-                self._capture_request = request
+                self._capture_request = pb.CaptureRequest(
+                    protocol_version=PROTOCOL_VERSION,
+                    request_id=request_id,
+                    session_id=self.session_id,
+                    checkpoint_id=checkpoint_id,
+                    episode_id=episode_id,
+                    seed=seed,
+                )
                 return
             if case in {"connection_hello", "connection_ready"}:
+                self._handshake(message)
                 continue
             raise ProtocolStateError(
                 f"unexpected {case or 'empty'} message while preparing capture"

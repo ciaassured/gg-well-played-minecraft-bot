@@ -13,8 +13,10 @@ applied action to Paper after that movement tick has completed, so Paper checks
 the resulting server-side position without adding another idle client tick.
 Training mode does not load Replay Mod; recording mode loads pinned Replay Mod
 2.6.27. The recording client waits for Replay Mod startup before joining,
-disables rename prompts, finalizes one valid `.mcpr` per requested checkpoint,
-and reconnects only when the trainer says another capture follows.
+disables rename prompts, replaces its initial idle recording with a clean
+session before acknowledging the first capture, finalizes one valid `.mcpr`
+per requested checkpoint, and reconnects only when the trainer says another
+capture follows.
 
 ```console
 nix develop ./client-mod

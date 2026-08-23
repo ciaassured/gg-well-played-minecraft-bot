@@ -191,11 +191,12 @@ def test_recording_capture_is_acknowledged_before_reconnect() -> None:
     transport = ScriptedTransport(
         [
             *handshake_messages(pb.CLIENT_MODE_RECORDING),
+            *handshake_messages(pb.CLIENT_MODE_RECORDING, "capture-session"),
             envelope(
                 capture_ready=pb.CaptureReady(
                     protocol_version=1,
                     request_id=200,
-                    session_id="test-session",
+                    session_id="capture-session",
                     checkpoint_id="untrained",
                     client_tick=12,
                 )
@@ -204,7 +205,7 @@ def test_recording_capture_is_acknowledged_before_reconnect() -> None:
                 capture_complete=pb.CaptureComplete(
                     protocol_version=1,
                     request_id=200,
-                    session_id="test-session",
+                    session_id="capture-session",
                     checkpoint_id="untrained",
                     episode_id=202,
                     replay_file="/tmp/untrained.mcpr",
@@ -220,7 +221,9 @@ def test_recording_capture_is_acknowledged_before_reconnect() -> None:
     artifact = connection.finish_capture(203, "untrained", 202, True)
 
     assert transport.sent[-2].capture_request.checkpoint_id == "untrained"
+    assert transport.sent[-2].capture_request.session_id == "test-session"
     shutdown = transport.sent[-1].shutdown
+    assert shutdown.session_id == "capture-session"
     assert shutdown.disconnect_minecraft
     assert shutdown.reconnect_minecraft
     assert artifact.replay_file.as_posix() == "/tmp/untrained.mcpr"

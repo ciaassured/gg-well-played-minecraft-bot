@@ -201,6 +201,10 @@ message Shutdown {
   bool reconnect_minecraft = 7;
 }
 
+// CaptureReady is sent only after the recording client has established a clean
+// Replay Mod session for this request. The ready session_id may therefore
+// differ from this request's session_id when a pre-capture recording had to be
+// finalized and replaced.
 message CaptureRequest {
   uint32 protocol_version = 1;
   uint64 request_id = 2;
