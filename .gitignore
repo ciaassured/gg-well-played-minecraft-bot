@@ -15,6 +15,7 @@ result-*
 # Runtime state and generated artifacts
 benchmark-server/runtime/
 client-mod/runtime/
+replay-renderer/runtime/
 runs/
 *.mcpr
 *.mp4
