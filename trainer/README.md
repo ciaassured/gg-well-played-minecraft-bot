@@ -28,11 +28,13 @@ JUMP request; a timeout, missed jump, or extra request makes the command fail.
 Runs are written beneath `trainer/runs` by default. Each run contains its
 configuration, metrics, untrained/latest/best checkpoints, validation promotion
 history, captured `.mcpr` files and metadata, and a reserved video directory.
-Training prints its run directory immediately, reports each learning range and
-checkpoint decision, and reports evaluation progress every ten episodes with
-successes, elapsed time, and an ETA. Low CPU utilization is normal because each
-action is synchronized to a real 20 TPS Minecraft client; the small DQN update
-is not the throughput bottleneck.
+Training uses consistent one-line `[train]` and `[evaluate]` records instead of
+SB3's box tables. It prints its run directory immediately, reports learning
+every 250 timesteps with recent episode metrics, and reports evaluation every
+ten episodes with successes, elapsed time, and an ETA. Checkpoint and promotion
+decisions use the same format. Low CPU utilization is normal because each action
+is synchronized to a real 20 TPS Minecraft client; the small DQN update is not
+the throughput bottleneck.
 Stop the training client and start `client-mod` in recording mode before using
 `capture`; every retained checkpoint is rerun on showcase seed `100000` without
 learning, then Replay Mod is finalized before the next checkpoint reconnects.

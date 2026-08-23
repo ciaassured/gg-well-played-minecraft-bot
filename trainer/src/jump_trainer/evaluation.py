@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from statistics import fmean
@@ -12,6 +11,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from jump_trainer.console import emit, format_duration
 from jump_trainer.env import JUMP, NOOP, MinecraftJumpEnv
 
 Policy = Callable[[NDArray[np.float32]], int]
@@ -88,15 +88,6 @@ def model_policy(model: Any) -> Policy:
     return choose
 
 
-def _format_duration(seconds: float) -> str:
-    total_seconds = max(0, round(seconds))
-    hours, remainder = divmod(total_seconds, 3_600)
-    minutes, remaining_seconds = divmod(remainder, 60)
-    if hours:
-        return f"{hours:d}:{minutes:02d}:{remaining_seconds:02d}"
-    return f"{minutes:02d}:{remaining_seconds:02d}"
-
-
 def _report_progress(
     *,
     policy_id: str,
@@ -104,21 +95,24 @@ def _report_progress(
     completed: int,
     total: int,
     successes: int,
+    mean_return: float | None,
     started_at: float,
 ) -> None:
     if completed == 0:
         detail = "starting"
     else:
+        if mean_return is None:
+            raise ValueError("completed evaluation progress requires a mean return")
         elapsed = monotonic() - started_at
         remaining = elapsed * (total - completed) / completed
         detail = (
-            f"successes={successes}, elapsed={_format_duration(elapsed)}, "
-            f"eta={_format_duration(remaining)}"
+            f"successes={successes}, mean_return={mean_return:.3f}, "
+            f"elapsed={format_duration(elapsed)}, eta={format_duration(remaining)}"
         )
-    print(
-        f"[evaluate] {suite}/{policy_id}: {completed}/{total} episodes; {detail}",
-        file=sys.stderr,
-        flush=True,
+    emit(
+        "evaluate",
+        f"{suite}/{policy_id}",
+        f"{completed}/{total} episodes; {detail}",
     )
 
 
@@ -142,6 +136,7 @@ def evaluate_policy(
         completed=0,
         total=len(episode_seeds),
         successes=0,
+        mean_return=None,
         started_at=started_at,
     )
     for seed in episode_seeds:
@@ -175,6 +170,7 @@ def evaluate_policy(
                 completed=completed,
                 total=len(episode_seeds),
                 successes=sum(episode.success for episode in results),
+                mean_return=fmean(episode.return_value for episode in results),
                 started_at=started_at,
             )
 

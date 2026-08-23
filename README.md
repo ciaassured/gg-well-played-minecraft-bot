@@ -69,8 +69,9 @@ nix run ./trainer#train
 `train` starts a new DQN from random initialization, draws training episode
 seeds from `0..99999`, and evaluates deterministic candidates on seeds
 `100000..100099`. By default it runs 30,000 Minecraft ticks and validates every
-5,000 ticks. Its console reports each learning range and evaluation progress at
-ten-episode intervals; low CPU utilization is expected because actions remain
+5,000 ticks. Its console uses consistent one-line records: learning is reported
+every 250 timesteps, evaluation every ten episodes, and checkpoint/promotion
+decisions as they occur. Low CPU utilization is expected because actions remain
 synchronized to Minecraft's real 20 TPS clock. It prints the new run directory
 immediately and again when complete. To load that run's
 promoted `checkpoints/best.zip` later and execute the showcase episode without

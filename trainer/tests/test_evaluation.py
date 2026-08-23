@@ -69,7 +69,7 @@ def test_evaluation_reports_visible_progress(capsys) -> None:
 
     output = capsys.readouterr().err
     assert "[evaluate] validation/candidate: 0/12 episodes; starting" in output
-    assert "[evaluate] validation/candidate: 10/12 episodes; successes=10" in output
-    assert "[evaluate] validation/candidate: 12/12 episodes; successes=12" in output
+    assert "[evaluate] validation/candidate: 10/12 episodes; successes=10, mean_return=" in output
+    assert "[evaluate] validation/candidate: 12/12 episodes; successes=12, mean_return=" in output
     assert report.success_count == 12
     env.close()

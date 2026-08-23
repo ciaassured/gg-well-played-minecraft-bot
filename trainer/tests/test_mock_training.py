@@ -6,10 +6,11 @@ import numpy as np
 from stable_baselines3 import DQN
 
 from jump_trainer.env import MinecraftJumpEnv
+from jump_trainer.training import TrainingProgressCallback
 from tests.fakes import SimulatedConnection
 
 
-def test_deterministic_mock_training_saves_and_loads(tmp_path: Path) -> None:
+def test_deterministic_mock_training_saves_and_loads(tmp_path: Path, capsys) -> None:
     connection = SimulatedConnection()
     env = MinecraftJumpEnv(connection_factory=lambda: connection, identifier_base=50_000)
     model = DQN(
@@ -29,7 +30,11 @@ def test_deterministic_mock_training_saves_and_loads(tmp_path: Path) -> None:
         device="cpu",
         verbose=0,
     )
-    model.learn(total_timesteps=64, progress_bar=False)
+    model.learn(
+        total_timesteps=64,
+        progress_bar=False,
+        callback=TrainingProgressCallback(total_timesteps=64, report_interval=16),
+    )
     checkpoint = tmp_path / "mock-dqn.zip"
     model.save(checkpoint)
     loaded = DQN.load(checkpoint, device="cpu")
@@ -38,4 +43,12 @@ def test_deterministic_mock_training_saves_and_loads(tmp_path: Path) -> None:
     loaded_action, _ = loaded.predict(observation, deterministic=True)
     assert int(np.asarray(original_action).item()) == int(np.asarray(loaded_action).item())
     assert checkpoint.is_file()
+    output = capsys.readouterr().err
+    assert "[train] learn: 16/64 timesteps;" in output
+    assert "[train] learn: 32/64 timesteps;" in output
+    assert "[train] learn: 48/64 timesteps;" in output
+    assert "[train] learn: 64/64 timesteps;" in output
+    assert "mean_return=" in output
+    assert "exploration=" in output
+    assert "eta=00:00" in output
     env.close()
