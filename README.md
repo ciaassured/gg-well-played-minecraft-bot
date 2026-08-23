@@ -229,3 +229,9 @@ Formatting remains project-local as well:
 (cd trainer && nix fmt)
 (cd replay-renderer && nix fmt)
 ```
+
+## License
+
+Repository-authored code is licensed under the GNU Affero General Public
+License, version 3 only. See [`LICENSE`](LICENSE). Third-party components retain
+their respective licenses.
