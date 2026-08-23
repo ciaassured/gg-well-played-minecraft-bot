@@ -26,6 +26,10 @@ class EpisodeMetrics:
     return_value: float
     completion_ticks: int
     jump_requests: int
+    mean_client_ticks_per_action: float
+    max_client_ticks_per_action: int
+    mean_server_ticks_per_action: float
+    max_server_ticks_per_action: int
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,10 @@ class EvaluationReport:
     mean_return: float
     mean_completion_ticks: float | None
     mean_jump_requests_successful: float | None
+    mean_client_ticks_per_action: float
+    max_client_ticks_per_action: int
+    mean_server_ticks_per_action: float
+    max_server_ticks_per_action: int
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -47,6 +55,10 @@ class EvaluationReport:
             "mean_return": self.mean_return,
             "mean_completion_ticks": self.mean_completion_ticks,
             "mean_jump_requests_successful": self.mean_jump_requests_successful,
+            "mean_client_ticks_per_action": self.mean_client_ticks_per_action,
+            "max_client_ticks_per_action": self.max_client_ticks_per_action,
+            "mean_server_ticks_per_action": self.mean_server_ticks_per_action,
+            "max_server_ticks_per_action": self.max_server_ticks_per_action,
             "episodes": [asdict(episode) for episode in self.episodes],
         }
 
@@ -96,17 +108,25 @@ def _report_progress(
     total: int,
     successes: int,
     mean_return: float | None,
+    mean_client_ticks_per_action: float | None,
+    mean_server_ticks_per_action: float | None,
     started_at: float,
 ) -> None:
     if completed == 0:
         detail = "starting"
     else:
-        if mean_return is None:
-            raise ValueError("completed evaluation progress requires a mean return")
+        if (
+            mean_return is None
+            or mean_client_ticks_per_action is None
+            or mean_server_ticks_per_action is None
+        ):
+            raise ValueError("completed evaluation progress requires return and cadence metrics")
         elapsed = monotonic() - started_at
         remaining = elapsed * (total - completed) / completed
         detail = (
             f"successes={successes}, mean_return={mean_return:.3f}, "
+            f"client_ticks/action={mean_client_ticks_per_action:.2f}, "
+            f"server_ticks/action={mean_server_ticks_per_action:.2f}, "
             f"elapsed={format_duration(elapsed)}, eta={format_duration(remaining)}"
         )
     emit(
@@ -129,6 +149,8 @@ def evaluate_policy(
     if not episode_seeds:
         raise ValueError("evaluation requires at least one seed")
     results: list[EpisodeMetrics] = []
+    client_tick_deltas: list[int] = []
+    server_tick_deltas: list[int] = []
     started_at = monotonic()
     _report_progress(
         policy_id=policy_id,
@@ -137,16 +159,26 @@ def evaluate_policy(
         total=len(episode_seeds),
         successes=0,
         mean_return=None,
+        mean_client_ticks_per_action=None,
+        mean_server_ticks_per_action=None,
         started_at=started_at,
     )
     for seed in episode_seeds:
         observation, _reset_info = env.reset(seed=seed)
         total_return = 0.0
         final_info: dict[str, Any] | None = None
+        episode_client_tick_deltas: list[int] = []
+        episode_server_tick_deltas: list[int] = []
         for _tick in range(201):
             action = policy(observation)
             observation, reward, terminated, truncated, info = env.step(action)
             total_return += reward
+            client_delta = int(info["client_tick_delta"])
+            server_delta = int(info["server_tick_delta"])
+            episode_client_tick_deltas.append(client_delta)
+            episode_server_tick_deltas.append(server_delta)
+            client_tick_deltas.append(client_delta)
+            server_tick_deltas.append(server_delta)
             if terminated or truncated:
                 final_info = info
                 break
@@ -160,6 +192,10 @@ def evaluate_policy(
                 return_value=total_return,
                 completion_ticks=int(final_info["elapsed_ticks"]),
                 jump_requests=int(final_info["jump_requests"]),
+                mean_client_ticks_per_action=fmean(episode_client_tick_deltas),
+                max_client_ticks_per_action=max(episode_client_tick_deltas),
+                mean_server_ticks_per_action=fmean(episode_server_tick_deltas),
+                max_server_ticks_per_action=max(episode_server_tick_deltas),
             )
         )
         completed = len(results)
@@ -171,6 +207,8 @@ def evaluate_policy(
                 total=len(episode_seeds),
                 successes=sum(episode.success for episode in results),
                 mean_return=fmean(episode.return_value for episode in results),
+                mean_client_ticks_per_action=fmean(client_tick_deltas),
+                mean_server_ticks_per_action=fmean(server_tick_deltas),
                 started_at=started_at,
             )
 
@@ -187,6 +225,10 @@ def evaluate_policy(
         mean_jump_requests_successful=(
             fmean(episode.jump_requests for episode in successful) if successful else None
         ),
+        mean_client_ticks_per_action=fmean(client_tick_deltas),
+        max_client_ticks_per_action=max(client_tick_deltas),
+        mean_server_ticks_per_action=fmean(server_tick_deltas),
+        max_server_ticks_per_action=max(server_tick_deltas),
     )
 
 

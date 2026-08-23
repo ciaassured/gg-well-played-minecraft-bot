@@ -49,6 +49,8 @@ def test_deterministic_mock_training_saves_and_loads(tmp_path: Path, capsys) -> 
     assert "[train] learn: 48/64 timesteps;" in output
     assert "[train] learn: 64/64 timesteps;" in output
     assert "mean_return=" in output
+    assert "client_ticks/action=1.00" in output
+    assert "server_ticks/action=1.00" in output
     assert "exploration=" in output
     assert "eta=00:00" in output
     env.close()

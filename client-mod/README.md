@@ -27,6 +27,11 @@ Start the Paper project first. HeadlessMC installs the pinned Fabric Loader
 0.19.3 into `client-mod/runtime/<mode>`, joins `127.0.0.1:25565`, and keeps
 training and recording game directories separate. Null-driver settings and
 client mixins bypass both host audio and speech/audio native initialization.
+The launcher allows 60 rendered/task frames per second and the bridge resets
+Minecraft's inactivity timer on every client tick. This prevents vanilla's
+10-FPS long-AFK throttle from reducing observation/action throughput; the game
+and authoritative server simulation still run at the normal 20 ticks per
+second.
 Set `JUMP_CLIENT_RUNTIME` to place that mutable runtime elsewhere. Recording
 source files are finalized beneath `<runtime>/game/replay_recordings`; the
 trainer copies verified captures into the selected run directory.

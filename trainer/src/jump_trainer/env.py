@@ -120,7 +120,7 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
         self._active = True
         self._jump_requests = 0
         self._episode_return = 0.0
-        info = self._info(observation, episode_seed)
+        info = self._info(observation, episode_seed, previous=None)
         return normalize_observation(observation), info
 
     def step(self, action: int) -> tuple[NDArray[np.float32], float, bool, bool, dict[str, Any]]:
@@ -161,7 +161,7 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
             raise InfrastructureError("terminal observation has no valid benchmark reason")
         if terminated or truncated:
             self._active = False
-        info = self._info(current, None)
+        info = self._info(current, None, previous=previous)
         return normalize_observation(current), reward, terminated, truncated, info
 
     def close(self) -> None:
@@ -187,7 +187,12 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
             self._connection.close()
             self._connection = None
 
-    def _info(self, observation: RawObservation, seed: int | None) -> dict[str, Any]:
+    def _info(
+        self,
+        observation: RawObservation,
+        seed: int | None,
+        previous: RawObservation | None,
+    ) -> dict[str, Any]:
         reason_name = pb.TerminalReason.Name(observation.terminal_reason)
         return {
             "episode_id": observation.episode_id,
@@ -197,5 +202,11 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
             "episode_return": self._episode_return,
             "success": observation.terminal_reason == pb.TERMINAL_REASON_SUCCESS,
             "terminal_reason": reason_name,
+            "client_tick_delta": (
+                observation.client_tick - previous.client_tick if previous is not None else None
+            ),
+            "server_tick_delta": (
+                observation.server_tick - previous.server_tick if previous is not None else None
+            ),
             "raw_observation": observation.as_dict(),
         }

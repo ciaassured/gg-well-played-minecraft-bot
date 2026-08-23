@@ -25,6 +25,10 @@ def test_scripted_baselines_and_promotion_order(tmp_path) -> None:
     assert noop.success_count == 0
     assert always.success_count == 3
     assert always.mean_jump_requests_successful == 1.0
+    assert always.mean_client_ticks_per_action == 1.0
+    assert always.max_client_ticks_per_action == 1
+    assert always.mean_server_ticks_per_action == 1.0
+    assert always.max_server_ticks_per_action == 1
     assert promotion_key(always) > promotion_key(noop)
     assert _promotion_metrics(noop)["mean_completion_ticks"] is None
     atomic_write_json(tmp_path / "no-success.json", _promotion_metrics(noop))
@@ -70,6 +74,7 @@ def test_evaluation_reports_visible_progress(capsys) -> None:
     output = capsys.readouterr().err
     assert "[evaluate] validation/candidate: 0/12 episodes; starting" in output
     assert "[evaluate] validation/candidate: 10/12 episodes; successes=10, mean_return=" in output
+    assert "client_ticks/action=1.00, server_ticks/action=1.00" in output
     assert "[evaluate] validation/candidate: 12/12 episodes; successes=12, mean_return=" in output
     assert report.success_count == 12
     env.close()

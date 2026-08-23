@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import sys
+from collections import deque
 from pathlib import Path
 from statistics import fmean
 from time import monotonic
@@ -49,6 +50,8 @@ class TrainingProgressCallback(BaseCallback):
         self.active_elapsed_seconds = 0.0
         self.segment_started_at: float | None = None
         self.last_reported_step = -1
+        self.client_tick_deltas: deque[int] = deque(maxlen=1_000)
+        self.server_tick_deltas: deque[int] = deque(maxlen=1_000)
 
     def _on_training_start(self) -> None:
         self.segment_started_at = monotonic()
@@ -57,6 +60,15 @@ class TrainingProgressCallback(BaseCallback):
         dones = self.locals.get("dones")
         if dones is not None:
             self.completed_episodes += sum(bool(done) for done in numpy.asarray(dones).reshape(-1))
+        infos = self.locals.get("infos")
+        if infos is not None:
+            for info in infos:
+                client_delta = info.get("client_tick_delta")
+                server_delta = info.get("server_tick_delta")
+                if client_delta is not None:
+                    self.client_tick_deltas.append(int(client_delta))
+                if server_delta is not None:
+                    self.server_tick_deltas.append(int(server_delta))
         step = int(self.model.num_timesteps)
         if step >= self.next_report or step >= self.total_timesteps:
             self._report(step)
@@ -94,12 +106,20 @@ class TrainingProgressCallback(BaseCallback):
             else "n/a"
         )
         exploration = float(getattr(self.model, "exploration_rate", 0.0))
+        mean_client_ticks = (
+            f"{fmean(self.client_tick_deltas):.2f}" if self.client_tick_deltas else "n/a"
+        )
+        mean_server_ticks = (
+            f"{fmean(self.server_tick_deltas):.2f}" if self.server_tick_deltas else "n/a"
+        )
         emit(
             "train",
             "learn",
             f"{step}/{self.total_timesteps} timesteps; "
             f"episodes={self.completed_episodes}, mean_length={mean_length}, "
             f"mean_return={mean_return}, exploration={exploration:.3f}, fps={fps:.1f}, "
+            f"client_ticks/action={mean_client_ticks}, "
+            f"server_ticks/action={mean_server_ticks}, "
             f"elapsed={format_duration(elapsed)}, eta={format_duration(remaining)}",
         )
         self.last_reported_step = step
@@ -161,7 +181,9 @@ def _validate_candidate(
         f"complete; successes={report.success_count}/{len(report.episodes)}, "
         f"mean_return={report.mean_return:.3f}, "
         f"mean_ticks={report.mean_completion_ticks}, "
-        f"mean_jumps={report.mean_jump_requests_successful}",
+        f"mean_jumps={report.mean_jump_requests_successful}, "
+        f"client_ticks/action={report.mean_client_ticks_per_action:.2f}, "
+        f"server_ticks/action={report.mean_server_ticks_per_action:.2f}",
     )
     return report
 

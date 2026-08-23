@@ -296,6 +296,10 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
 
   private void startTick(Minecraft client) {
     clientTick++;
+    // A headless benchmark has no physical mouse or keyboard input. Keep the
+    // vanilla inactivity tracker active so it does not silently cap the client
+    // at 10 FPS after ten minutes and starve tick/network task processing.
+    client.getFramerateLimitTracker().onInputReceived();
     if (mode == ClientMode.CLIENT_MODE_RECORDING && !replayStartupCallbackRegistered) {
       replayStartupCallbackRegistered =
           ReplayModStatus.runAfterStartup(

@@ -32,6 +32,8 @@ def test_reset_step_termination_and_requested_jump_accounting() -> None:
     assert truncated is False
     assert info["success"] is True
     assert info["jump_requests"] == 1
+    assert info["client_tick_delta"] == 1
+    assert info["server_tick_delta"] == 1
     assert connection.actions[-1] != 0
     env.close()
     assert connection.closed

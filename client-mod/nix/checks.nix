@@ -52,6 +52,9 @@
         grep -q 'clientTick - lastHelloAttemptTick >= 20' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'hmc.offline=true' ${./apps.nix}
         grep -q 'narrator:0' ${./apps.nix}
+        grep -q 'maxFps:60' ${./apps.nix}
+        grep -q 'inactivityFpsLimit:minimized' ${./apps.nix}
+        grep -q 'getFramerateLimitTracker().onInputReceived()' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'renameDialog.*false' ${./apps.nix}
         grep -q 'jump.client.replayDir' ${./apps.nix}
         grep -q 'ReplayModStatus.runAfterStartup' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}

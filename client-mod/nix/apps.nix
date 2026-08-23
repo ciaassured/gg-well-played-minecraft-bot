@@ -89,7 +89,8 @@
           echo "narrator:0"
           echo "autoJump:false"
           echo "enableVsync:false"
-          echo "maxFps:20"
+          echo "maxFps:60"
+          echo "inactivityFpsLimit:minimized"
           echo "soundCategory_master:0.0"
         } > "$game_dir/options.txt"
 
