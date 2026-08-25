@@ -53,6 +53,8 @@
         grep -q 'keySprint.setDown(false)' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'clientTick - lastHelloAttemptTick >= 20' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'hmc.offline=true' ${./apps.nix}
+        grep -q 'echo "hmc.fileloglevel=INFO"' ${./apps.nix}
+        grep -q 'java -Dhmc.fileloglevel=INFO' ${./apps.nix}
         grep -q 'jump.client.offline=true' ${./apps.nix}
         grep -q 'narrator:0' ${./apps.nix}
         grep -q 'maxFps:60' ${./apps.nix}

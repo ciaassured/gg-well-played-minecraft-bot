@@ -30,7 +30,9 @@ nix run ./client-mod#headless
 Start the Paper project first. HeadlessMC installs the pinned Fabric Loader
 0.19.3 into `client-mod/runtime/client` and joins `127.0.0.1:25565`. Null-driver
 settings and client mixins bypass both host audio and speech/audio native
-initialization.
+initialization. Its `headlessmc.log` records launcher messages at INFO and above,
+retaining INFO/WARN/ERROR records while omitting FINE diagnostics; Minecraft's
+own logging threshold is unchanged.
 
 The launcher deliberately uses an offline Minecraft session against the local
 offline-mode Paper server. The client routes profile-key lookup through authlib's

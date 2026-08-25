@@ -47,6 +47,7 @@
           echo "hmc.offline=true"
           echo "hmc.assets.dummy=true"
           echo "hmc.jline.enabled=false"
+          echo "hmc.fileloglevel=INFO"
           echo "hmc.exit.on.failed.command=true"
           echo "hmc.auto.download.java=false"
           echo "hmc.java.use.current=true"
@@ -70,7 +71,8 @@
         game_args=("$@")
         finalization_timeout="''${JUMP_CLIENT_FINALIZATION_TIMEOUT_MILLIS:-300000}"
         command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Djump.client.offline=true -Djump.client.port=64123 -Djump.client.server=127.0.0.1:25565 -Djump.client.replayDir=$game_dir/replay_recordings -Djump.client.finalizationTimeoutMillis=$finalization_timeout -Xms512m -Xmx2g\" --game-args \"''${game_args[*]}\""
-        printf '%s\n' "$command_line" | java --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
+        printf '%s\n' "$command_line" | java -Dhmc.fileloglevel=INFO \
+          --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
       '';
     };
   in {
