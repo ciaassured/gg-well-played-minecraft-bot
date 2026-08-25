@@ -6,5 +6,6 @@ __pycache__/
 build/
 dist/
 evaluations/
+recordings/
 runs/
 *.egg-info/

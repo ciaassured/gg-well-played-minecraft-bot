@@ -11,12 +11,17 @@ result-*
 **/.mypy_cache/
 **/__pycache__/
 **/*.pyc
+**/dist/
+**/*.egg-info/
 
 # Runtime state and generated artifacts
 benchmark-server/runtime/
 client-mod/runtime/
 replay-renderer/runtime/
+evaluations/
+recordings/
 runs/
+videos/
 *.mcpr
 *.mp4
 *.mkv
