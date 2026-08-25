@@ -105,6 +105,11 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     LOGGER.info(
         "Jump benchmark client ready on 127.0.0.1:{}; waiting for Replay Mod startup",
         DEFAULT_PORT);
+    if (Boolean.getBoolean("jump.client.offline")) {
+      LOGGER.info(
+          "Offline authentication is intentional; authenticated profile-key retrieval is disabled"
+              + " and Realms authorization errors are non-fatal");
+    }
   }
 
   private void joinedPaper(Minecraft client) {

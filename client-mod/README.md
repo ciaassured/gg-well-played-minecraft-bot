@@ -31,6 +31,13 @@ Start the Paper project first. HeadlessMC installs the pinned Fabric Loader
 0.19.3 into `client-mod/runtime/client` and joins `127.0.0.1:25565`. Null-driver
 settings and client mixins bypass both host audio and speech/audio native
 initialization.
+
+The launcher deliberately uses an offline Minecraft session against the local
+offline-mode Paper server. The client routes profile-key lookup through authlib's
+offline service to avoid an unnecessary authenticated request. Vanilla Realms
+requests can still log non-fatal authorization errors; they do not prevent the
+benchmark connection.
+
 The launcher allows 60 rendered/task frames per second and the bridge resets
 Minecraft's inactivity timer on every client tick. This prevents vanilla's
 10-FPS long-AFK throttle from reducing observation/action throughput; the game

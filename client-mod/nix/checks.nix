@@ -53,6 +53,7 @@
         grep -q 'keySprint.setDown(false)' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'clientTick - lastHelloAttemptTick >= 20' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'hmc.offline=true' ${./apps.nix}
+        grep -q 'jump.client.offline=true' ${./apps.nix}
         grep -q 'narrator:0' ${./apps.nix}
         grep -q 'maxFps:60' ${./apps.nix}
         grep -q 'inactivityFpsLimit:minimized' ${./apps.nix}
@@ -73,6 +74,7 @@
           exit 1
         fi
         grep -q 'Narrator.EMPTY' ${../src/main/java/gg/wellplayed/jump/client/mixin/GameNarratorMixin.java}
+        grep -q 'UserApiService.OFFLINE' ${../src/main/java/gg/wellplayed/jump/client/mixin/OfflineProfileKeyPairMixin.java}
         grep -q 'SoundEngine;reload()V' ${../src/main/java/gg/wellplayed/jump/client/mixin/SoundManagerMixin.java}
         touch "$out"
       '';
