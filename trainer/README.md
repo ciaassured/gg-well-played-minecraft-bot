@@ -15,8 +15,7 @@ nix build ./trainer
 nix flake check ./trainer
 (cd trainer && nix fmt)
 nix run ./trainer#smoke
-nix run ./trainer#evaluate -- --policy noop --suite validation
-nix run ./trainer#evaluate -- --checkpoint <checkpoint.zip> --suite test
+nix run ./trainer#evaluate -- --checkpoint <checkpoint.zip> [--episodes 100] [--output <report.json>]
 nix run ./trainer#train
 nix run ./trainer#run -- --run <run-directory>
 ```
@@ -34,13 +33,17 @@ retain recordings beneath
 one manifest and sequential `<ordinal>-seed-<seed>.mcpr` files.
 Training uses consistent one-line `[train]` and `[evaluate]` records instead of
 SB3's box tables. It prints its run directory immediately, reports learning
-every 250 timesteps with recent episode metrics, and reports evaluation every
-ten episodes with successes, elapsed time, and an ETA. Both records include
+every 250 timesteps with recent episode metrics, and reports periodic
+**validation** every ten episodes with successes, elapsed time, and an ETA.
+Both records include
 `client_ticks/action` and `server_ticks/action`; values near `1.00` confirm that
 the policy is receiving one decision opportunity per game tick. Checkpoint and
-promotion decisions use the same format. Low CPU utilization is normal because
-each action is synchronized to a real 20 TPS Minecraft client; the small DQN
-update is not the throughput bottleneck.
+promotion decisions use the same format. Validation ranks candidates using the
+existing success, completion-time, and jump-request ordering and may promote a
+candidate to `checkpoints/best.zip`. The public `evaluate` command only measures
+a frozen checkpoint and never participates in promotion. Low CPU utilization
+is normal because each action is synchronized to a real 20 TPS Minecraft
+client; the small DQN update is not the throughput bottleneck.
 Pressing Ctrl-C during learning saves the current in-memory model as
 `checkpoints/latest.zip`, writes `metrics/training-interrupted.json`, and exits
 without a traceback. A later `train` command always starts a new run; use
@@ -54,7 +57,28 @@ status, marks an in-progress episode partial, and still requests command
 finalization. `JUMP_TRAINER_RECORDING_TIMEOUT` or `--recording-timeout` changes
 the default five-minute wait.
 
-A checkpoint evaluation on the `test` suite also evaluates both scripted
-baselines and persists the four final acceptance predicates. If any predicate
-fails, the command prints the report and then exits with status `3`, allowing
-automation to distinguish a rejected checkpoint from a passing evaluation.
+`evaluate` defaults to 100 consecutive episodes on seeds `200000..200099` and
+accepts any positive `--episodes` count. Its concise terminal summary identifies
+the checkpoint and report, successes and success rate, terminal-reason counts,
+mean return, successful-episode completion ticks and jump requests, and client
+and server tick cadence. Metrics that require a successful episode are shown as
+`n/a` when there are no successes.
+
+The detailed JSON contains the resolved checkpoint path, inclusive seed range,
+the same aggregates (`success_rate` is a `0..1` fraction), and all per-episode
+metrics. A run-owned checkpoint writes by default to
+`<run>/metrics/performance-<checkpoint>-<N>-episodes.json`; an external
+checkpoint writes to
+`$JUMP_TRAINER_OUTPUT_ROOT/performance-<checkpoint>-<N>-episodes.json`
+(`trainer/evaluations/` under the Nix app). `--output` overrides the path, and
+repeating the same deterministic evaluation replaces the report. Recordings
+remain timestamped beneath
+`$JUMP_TRAINER_RECORDING_ROOT/evaluate/<UTC timestamp>/`. Completing the command
+always exits `0` regardless of performance; invalid arguments or infrastructure
+exit `2`, and Ctrl-C exits `130`.
+
+When migrating to YRush, replace these episode metrics and the current
+validation promotion ordering with authoritative YRush outcomes and suitable
+performance criteria. Retain the checkpoint-only, report-only public evaluator;
+do not introduce scripted YRush baselines or a binary gate without an external
+definition of “good.”

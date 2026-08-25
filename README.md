@@ -52,20 +52,44 @@ To load that run's promoted `checkpoints/best.zip` later and execute the showcas
 nix run ./trainer#run -- --run <run-directory>
 ```
 
-## Evaluation and rendering
+## Checkpoint performance and rendering
 
-Baseline and checkpoint evaluation examples are:
+Measure a frozen checkpoint deterministically without learning:
 
 ```console
-nix run ./trainer#evaluate -- --policy noop --suite validation
-nix run ./trainer#evaluate -- --policy always-jump --suite test
-nix run ./trainer#evaluate -- --checkpoint <checkpoint.zip> --suite test
+nix run ./trainer#evaluate -- --checkpoint <checkpoint.zip> [--episodes 100] [--output <report.json>]
 ```
 
-The checkpoint test command also evaluates both baselines on final seeds
-`200000..200099` and reports every acceptance condition: at least 95 successes,
-higher mean return than both baselines, and at most two requested jumps on
-successful episodes.
+The default 100 episodes use consecutive seeds `200000..200099`; changing
+`--episodes` extends or shortens that sequence from `200000`. The JSON report
+records the resolved checkpoint, inclusive seed range, success count and
+`0..1` success rate, observed terminal-reason counts, return and successful-
+episode metrics, tick cadence, and every episode. The terminal summary renders
+successful-episode completion ticks and jump requests as `n/a` when there are
+no successes.
+
+When the checkpoint is inside a training run, the default report is
+`<run>/metrics/performance-<checkpoint>-<N>-episodes.json`. Otherwise it is
+`$JUMP_TRAINER_OUTPUT_ROOT/performance-<checkpoint>-<N>-episodes.json`
+(`trainer/evaluations/` by default through the Nix app). `--output` overrides
+either location. Repeating the same checkpoint and episode count intentionally
+replaces that deterministic report. Episode recordings remain historical,
+timestamped artifacts under
+`trainer/recordings/evaluate/<UTC timestamp>/` (or
+`$JUMP_TRAINER_RECORDING_ROOT/evaluate/`).
+
+This command only reports performance: a completed evaluation exits `0`
+regardless of the checkpoint's results. Invalid arguments or infrastructure
+failures exit `2`, and interruption exits `130`. During training, periodic
+**validation** on its unchanged validation partition ranks candidates with the
+configured promotion ordering and may update `checkpoints/best.zip`; the public
+command neither validates nor promotes a checkpoint.
+
+For a future YRush migration, replace the current one-block episode metrics and
+promotion ordering with authoritative YRush outcomes and performance criteria
+appropriate to that benchmark. Keep the public evaluator checkpoint-only and
+report-only. Do not add scripted YRush baselines or a binary acceptance gate
+until an external definition of “good” supplies those criteria.
 
 There is no retroactive capture command or checkpoint highlighting. Recordings
 are historical artifacts of the command that ran the episodes. Once a command
@@ -106,8 +130,9 @@ run-<UTC timestamp>/
 `-- ...
 ```
 
-Validation reports and training summaries are under `metrics/`; final
-checkpoint evaluation writes there when the checkpoint belongs to a run.
+Validation reports and training summaries are under `metrics/`; checkpoint
+performance reports are also written there when the checkpoint belongs to a
+run.
 Training recordings and their command manifest are under the run's `replays/`
 directory. Other commands use
 `trainer/recordings/{smoke,evaluate,run}/<UTC timestamp>/`; relocate that root

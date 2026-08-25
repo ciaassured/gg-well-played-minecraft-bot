@@ -3,24 +3,26 @@ from __future__ import annotations
 import pytest
 
 from jump_trainer.config import (
+    EVALUATION_SEED_START,
     SHOWCASE_SEED,
-    TEST_SEEDS,
     TRAIN_SEED_MAX,
     TRAIN_SEED_MIN,
     VALIDATION_SEEDS,
     TrainConfig,
-    seeds_for_suite,
+    evaluation_seeds,
 )
 
 
 def test_seed_partitions_are_exact_and_disjoint() -> None:
     assert (TRAIN_SEED_MIN, TRAIN_SEED_MAX) == (0, 99_999)
     assert tuple(range(100_000, 100_100)) == VALIDATION_SEEDS
-    assert tuple(range(200_000, 200_100)) == TEST_SEEDS
+    assert EVALUATION_SEED_START == 200_000
+    assert evaluation_seeds(1) == (200_000,)
+    assert evaluation_seeds(100) == tuple(range(200_000, 200_100))
     assert SHOWCASE_SEED == 100_000
-    assert set(VALIDATION_SEEDS).isdisjoint(TEST_SEEDS)
-    assert seeds_for_suite("validation") == VALIDATION_SEEDS
-    assert seeds_for_suite("test") == TEST_SEEDS
+    assert set(VALIDATION_SEEDS).isdisjoint(evaluation_seeds(100))
+    with pytest.raises(ValueError, match="positive"):
+        evaluation_seeds(0)
 
 
 def test_training_configuration_validation() -> None:

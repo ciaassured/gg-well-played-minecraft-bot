@@ -16,16 +16,13 @@ from jump_trainer.config import (
     DEFAULT_PORT,
     SHOWCASE_SEED,
     TrainConfig,
-    seeds_for_suite,
+    evaluation_seeds,
 )
 from jump_trainer.env import MinecraftJumpEnv
 from jump_trainer.errors import InfrastructureError
 from jump_trainer.evaluation import (
-    always_jump_policy,
     evaluate_policy,
-    final_passing_result,
     model_policy,
-    noop_policy,
     scripted_one_jump_policy,
 )
 from jump_trainer.recording import RecordingSession, recording_directory
@@ -35,8 +32,6 @@ from jump_trainer.run_directory import (
     find_run_for_checkpoint,
 )
 from jump_trainer.training import train
-
-FINAL_ACCEPTANCE_FAILURE_EXIT_CODE = 3
 
 
 def _add_connection_arguments(
@@ -53,6 +48,13 @@ def _add_connection_arguments(
     )
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jump-trainer")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -61,11 +63,11 @@ def _parser() -> argparse.ArgumentParser:
     smoke.add_argument("--seed", type=int, default=SHOWCASE_SEED)
     _add_connection_arguments(smoke)
 
-    evaluate = commands.add_parser("evaluate", help="deterministically evaluate without learning")
-    subject = evaluate.add_mutually_exclusive_group(required=True)
-    subject.add_argument("--policy", choices=("noop", "always-jump"))
-    subject.add_argument("--checkpoint", type=Path)
-    evaluate.add_argument("--suite", choices=("validation", "test"), required=True)
+    evaluate = commands.add_parser(
+        "evaluate", help="report deterministic checkpoint performance without learning"
+    )
+    evaluate.add_argument("--checkpoint", type=Path, required=True)
+    evaluate.add_argument("--episodes", type=_positive_int, default=100)
     evaluate.add_argument("--output", type=Path)
     _add_connection_arguments(evaluate)
 
@@ -116,59 +118,86 @@ def _environment(arguments: argparse.Namespace, recording: RecordingSession) -> 
     )
 
 
-def _default_evaluation_output(policy_id: str, suite: str, checkpoint: Path | None) -> Path:
-    if checkpoint is not None:
-        run = find_run_for_checkpoint(checkpoint)
-        if run is not None:
-            return run.metrics / f"evaluation-{policy_id}-{suite}.json"
+def _default_evaluation_output(checkpoint: Path, episode_count: int) -> Path:
+    if episode_count <= 0:
+        raise ValueError("episodes must be positive")
+    checkpoint = checkpoint.resolve()
+    filename = f"performance-{checkpoint.stem}-{episode_count}-episodes.json"
+    run = find_run_for_checkpoint(checkpoint)
+    if run is not None:
+        return run.metrics / filename
     root = Path(os.environ.get("JUMP_TRAINER_OUTPUT_ROOT", "trainer/evaluations"))
-    return root / f"evaluation-{policy_id}-{suite}.json"
+    return root / filename
 
 
 def _evaluate(arguments: argparse.Namespace) -> dict[str, Any]:
-    seeds = seeds_for_suite(str(arguments.suite))
-    checkpoint = Path(arguments.checkpoint).resolve() if arguments.checkpoint else None
+    checkpoint = Path(arguments.checkpoint).resolve()
+    if not checkpoint.is_file():
+        raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
+    seeds = evaluation_seeds(int(arguments.episodes))
+    model = DQN.load(checkpoint, device="cpu")
+    policy_id = checkpoint.stem
     with _recording(arguments, "evaluate") as recording:
         env = _environment(arguments, recording)
+        env.set_recording_context(
+            policy_id=policy_id,
+            suite="performance",
+            checkpoint=str(checkpoint),
+        )
         try:
-            if arguments.policy:
-                policy_id = str(arguments.policy)
-                policy = noop_policy if policy_id == "noop" else always_jump_policy
-                env.set_recording_context(policy_id=policy_id, suite=str(arguments.suite))
-                report = evaluate_policy(env, policy, seeds, policy_id, str(arguments.suite))
-                result: dict[str, Any] = {"evaluation": report.as_dict()}
-            else:
-                if checkpoint is None or not checkpoint.is_file():
-                    raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
-                model = DQN.load(checkpoint, device="cpu")
-                policy_id = checkpoint.stem
-                env.set_recording_context(
-                    policy_id=policy_id,
-                    suite=str(arguments.suite),
-                    checkpoint=str(checkpoint),
-                )
-                report = evaluate_policy(
-                    env, model_policy(model), seeds, policy_id, str(arguments.suite)
-                )
-                result = {"evaluation": report.as_dict()}
-                if arguments.suite == "test":
-                    env.set_recording_context(policy_id="noop", suite="test")
-                    noop = evaluate_policy(env, noop_policy, seeds, "noop", "test")
-                    env.set_recording_context(policy_id="always-jump", suite="test")
-                    always = evaluate_policy(env, always_jump_policy, seeds, "always-jump", "test")
-                    result["baselines"] = {
-                        "noop": noop.as_dict(),
-                        "always_jump": always.as_dict(),
-                    }
-                    result["acceptance"] = final_passing_result(report, noop, always)
-            output = arguments.output or _default_evaluation_output(
-                policy_id, str(arguments.suite), checkpoint
+            report = evaluate_policy(
+                env,
+                model_policy(model),
+                seeds,
+                policy_id,
+                "performance",
             )
+            result: dict[str, Any] = {
+                "checkpoint": str(checkpoint),
+                "seed_range": {"start": seeds[0], "end": seeds[-1]},
+                "evaluation": report.as_dict(),
+            }
+            output = arguments.output or _default_evaluation_output(checkpoint, len(seeds))
             atomic_write_json(Path(output), result)
             result["report_file"] = str(Path(output).resolve())
         finally:
             env.close()
     return result
+
+
+def _optional_metric(value: Any) -> str:
+    return "n/a" if value is None else f"{float(value):.2f}"
+
+
+def _evaluation_summary(result: dict[str, Any]) -> str:
+    evaluation = dict(result["evaluation"])
+    seed_range = dict(result["seed_range"])
+    terminal_reason_counts = dict(evaluation["terminal_reason_counts"])
+    terminal_reasons = ", ".join(
+        f"{reason}={count}" for reason, count in sorted(terminal_reason_counts.items())
+    )
+    episode_count = int(evaluation["episode_count"])
+    success_count = int(evaluation["success_count"])
+    return "\n".join(
+        (
+            f"checkpoint: {result['checkpoint']}",
+            f"episodes/seeds: {episode_count}; "
+            f"{seed_range['start']}..{seed_range['end']} inclusive",
+            f"successes: {success_count}/{episode_count} ({float(evaluation['success_rate']):.2%})",
+            f"terminal reasons: {terminal_reasons or 'n/a'}",
+            f"mean return: {float(evaluation['mean_return']):.3f}",
+            "successful episodes: "
+            f"mean completion ticks={_optional_metric(evaluation['mean_completion_ticks'])}, "
+            "mean jump requests="
+            f"{_optional_metric(evaluation['mean_jump_requests_successful'])}",
+            "tick cadence: "
+            f"client mean={float(evaluation['mean_client_ticks_per_action']):.2f}, "
+            f"max={int(evaluation['max_client_ticks_per_action'])}; "
+            f"server mean={float(evaluation['mean_server_ticks_per_action']):.2f}, "
+            f"max={int(evaluation['max_server_ticks_per_action'])} ticks/action",
+            f"report: {result['report_file']}",
+        )
+    )
 
 
 def _run(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -240,11 +269,6 @@ def _train(arguments: argparse.Namespace) -> dict[str, Any]:
     return {"status": "complete", "run_directory": str(run.root)}
 
 
-def _final_acceptance_failed(result: dict[str, Any]) -> bool:
-    acceptance = result.get("acceptance")
-    return isinstance(acceptance, dict) and acceptance.get("passed") is False
-
-
 def main() -> None:
     arguments = _parser().parse_args()
     try:
@@ -258,20 +282,16 @@ def main() -> None:
             result = _run(arguments)
         else:
             raise AssertionError(f"unhandled command: {arguments.command}")
-    except (InfrastructureError, FileNotFoundError, ValueError, RuntimeError) as exception:
+    except (InfrastructureError, OSError, ValueError, RuntimeError) as exception:
         print(f"jump-trainer: {exception}", file=sys.stderr)
         raise SystemExit(2) from exception
     except KeyboardInterrupt:
         print("jump-trainer: interrupted by user", file=sys.stderr)
         raise SystemExit(130) from None
-    print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
-    if _final_acceptance_failed(result):
-        print(
-            "jump-trainer: final checkpoint failed acceptance; "
-            f"see {result.get('report_file', 'the JSON report')}",
-            file=sys.stderr,
-        )
-        raise SystemExit(FINAL_ACCEPTANCE_FAILURE_EXIT_CODE)
+    if arguments.command == "evaluate":
+        print(_evaluation_summary(result))
+    else:
+        print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
 
 
 if __name__ == "__main__":

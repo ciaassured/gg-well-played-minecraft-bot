@@ -8,7 +8,7 @@ from typing import Any
 TRAIN_SEED_MIN = 0
 TRAIN_SEED_MAX = 99_999
 VALIDATION_SEEDS = tuple(range(100_000, 100_100))
-TEST_SEEDS = tuple(range(200_000, 200_100))
+EVALUATION_SEED_START = 200_000
 SHOWCASE_SEED = 100_000
 PROTOCOL_VERSION = 2
 DEFAULT_HOST = "127.0.0.1"
@@ -62,9 +62,9 @@ class TrainConfig:
         return asdict(self)
 
 
-def seeds_for_suite(name: str) -> tuple[int, ...]:
-    if name == "validation":
-        return VALIDATION_SEEDS
-    if name == "test":
-        return TEST_SEEDS
-    raise ValueError(f"unknown evaluation suite: {name}")
+def evaluation_seeds(episode_count: int) -> tuple[int, ...]:
+    """Return the fixed public-evaluation sequence for an episode count."""
+
+    if episode_count <= 0:
+        raise ValueError("episodes must be positive")
+    return tuple(range(EVALUATION_SEED_START, EVALUATION_SEED_START + episode_count))

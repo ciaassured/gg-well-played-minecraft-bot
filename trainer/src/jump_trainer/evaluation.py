@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from statistics import fmean
@@ -46,12 +47,22 @@ class EvaluationReport:
     mean_server_ticks_per_action: float
     max_server_ticks_per_action: int
 
+    @property
+    def success_rate(self) -> float:
+        return self.success_count / len(self.episodes)
+
+    @property
+    def terminal_reason_counts(self) -> dict[str, int]:
+        return dict(sorted(Counter(episode.terminal_reason for episode in self.episodes).items()))
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "policy_id": self.policy_id,
             "suite": self.suite,
             "episode_count": len(self.episodes),
             "success_count": self.success_count,
+            "success_rate": self.success_rate,
+            "terminal_reason_counts": self.terminal_reason_counts,
             "mean_return": self.mean_return,
             "mean_completion_ticks": self.mean_completion_ticks,
             "mean_jump_requests_successful": self.mean_jump_requests_successful,
@@ -61,14 +72,6 @@ class EvaluationReport:
             "max_server_ticks_per_action": self.max_server_ticks_per_action,
             "episodes": [asdict(episode) for episode in self.episodes],
         }
-
-
-def noop_policy(_observation: NDArray[np.float32]) -> int:
-    return NOOP
-
-
-def always_jump_policy(_observation: NDArray[np.float32]) -> int:
-    return JUMP
 
 
 def scripted_one_jump_policy(trigger_distance: float = 1.5) -> Policy:
@@ -242,18 +245,3 @@ def promotion_key(report: EvaluationReport) -> tuple[int, float, float]:
         -(ticks if ticks is not None else float("inf")),
         -(jumps if jumps is not None else float("inf")),
     )
-
-
-def final_passing_result(
-    checkpoint: EvaluationReport,
-    noop: EvaluationReport,
-    always_jump: EvaluationReport,
-) -> dict[str, Any]:
-    jumps = checkpoint.mean_jump_requests_successful
-    requirements = {
-        "success_at_least_95": checkpoint.success_count >= 95,
-        "return_above_noop": checkpoint.mean_return > noop.mean_return,
-        "return_above_always_jump": checkpoint.mean_return > always_jump.mean_return,
-        "at_most_two_jumps_on_success": jumps is not None and jumps <= 2.0,
-    }
-    return {"passed": all(requirements.values()), "requirements": requirements}

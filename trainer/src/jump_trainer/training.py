@@ -17,7 +17,7 @@ import torch
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
 
-from jump_trainer.config import VALIDATION_SEEDS, TrainConfig
+from jump_trainer.config import EVALUATION_SEED_START, VALIDATION_SEEDS, TrainConfig
 from jump_trainer.console import emit, format_duration
 from jump_trainer.env import MinecraftJumpEnv
 from jump_trainer.errors import InfrastructureError
@@ -215,7 +215,7 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
             "seed_partitions": {
                 "training": [0, 99_999],
                 "validation": [100_000, 100_099],
-                "test": [200_000, 200_099],
+                "evaluation": {"start": EVALUATION_SEED_START},
                 "showcase": 100_000,
             },
         },
