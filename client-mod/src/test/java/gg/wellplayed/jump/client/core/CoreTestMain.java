@@ -36,11 +36,25 @@ public final class CoreTestMain {
 
   public static void main(String[] args) throws Exception {
     framingRoundTripsAndRejectsBadLengths();
+    expectedDisconnectsAreBoundToConnectionIds();
     resetAndActionSequencingIsStrict();
     actionDeadlineAbortsInputs();
     observationsUseCollisionBoxFront();
     episodeMarkersAndMultiFileFinalizationAreStrict();
     System.out.println("client core assertions: " + assertions);
+  }
+
+  private static void expectedDisconnectsAreBoundToConnectionIds() throws Exception {
+    ExpectedDisconnects disconnects = new ExpectedDisconnects();
+    disconnects.expect(7);
+    check(!disconnects.consume(8));
+    check(disconnects.consume(7));
+    check(!disconnects.consume(7));
+
+    disconnects.expect(9);
+    disconnects.cancel(9);
+    check(!disconnects.consume(9));
+    throwsType(IllegalArgumentException.class, () -> disconnects.expect(0));
   }
 
   private static void framingRoundTripsAndRejectsBadLengths() throws Exception {

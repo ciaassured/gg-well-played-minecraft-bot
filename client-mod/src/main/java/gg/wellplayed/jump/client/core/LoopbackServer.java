@@ -10,23 +10,27 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Single-peer, loopback-only TCP endpoint used by the local Python trainer. */
 public final class LoopbackServer implements Closeable {
   public interface Listener {
-    void connected();
+    void connected(long connectionId);
 
-    void message(WireMessage message);
+    void message(long connectionId, WireMessage message);
 
-    void disconnected(Throwable cause);
+    void disconnected(long connectionId, Throwable cause);
   }
+
+  private record Peer(long connectionId, Socket socket) {}
 
   private final int port;
   private final Listener listener;
   private final AtomicBoolean running = new AtomicBoolean();
+  private final AtomicLong nextConnectionId = new AtomicLong(1);
   private final Object outputLock = new Object();
   private ServerSocket serverSocket;
-  private volatile Socket peer;
+  private volatile Peer peer;
 
   public LoopbackServer(int port, Listener listener) {
     if (port < 1 || port > 65535) {
@@ -47,17 +51,35 @@ public final class LoopbackServer implements Closeable {
   }
 
   public boolean connected() {
-    Socket socket = peer;
-    return socket != null && socket.isConnected() && !socket.isClosed();
+    Peer current = peer;
+    return current != null && current.socket().isConnected() && !current.socket().isClosed();
+  }
+
+  public long connectionId() {
+    Peer current = peer;
+    if (current == null || current.socket().isClosed()) {
+      return 0;
+    }
+    return current.connectionId();
   }
 
   public void send(WireMessage message) throws IOException {
+    long connectionId = connectionId();
+    if (connectionId == 0) {
+      throw new IOException("trainer is not connected");
+    }
+    send(connectionId, message);
+  }
+
+  public void send(long connectionId, WireMessage message) throws IOException {
     synchronized (outputLock) {
-      Socket socket = peer;
-      if (socket == null || socket.isClosed()) {
+      Peer current = peer;
+      if (current == null
+          || current.connectionId() != connectionId
+          || current.socket().isClosed()) {
         throw new IOException("trainer is not connected");
       }
-      FramedProtobuf.write(socket.getOutputStream(), message);
+      FramedProtobuf.write(current.socket().getOutputStream(), message);
     }
   }
 
@@ -68,27 +90,28 @@ public final class LoopbackServer implements Closeable {
         Socket socket = serverSocket.accept();
         socket.setTcpNoDelay(true);
         socket.setKeepAlive(true);
-        peer = socket;
-        listener.connected();
+        long connectionId = nextConnectionId.getAndIncrement();
+        peer = new Peer(connectionId, socket);
+        listener.connected(connectionId);
         while (running.get() && !socket.isClosed()) {
-          listener.message(FramedProtobuf.read(socket.getInputStream()));
+          listener.message(connectionId, FramedProtobuf.read(socket.getInputStream()));
         }
       } catch (Throwable throwable) {
         failure = throwable;
       } finally {
-        Socket socket = peer;
+        Peer current = peer;
         peer = null;
-        if (socket != null) {
+        if (current != null) {
           try {
-            socket.close();
+            current.socket().close();
           } catch (IOException ignored) {
             // The original transport failure is more useful.
           }
           if (running.get()) {
-            listener.disconnected(failure);
+            listener.disconnected(current.connectionId(), failure);
           }
         } else if (running.get() && !(failure instanceof SocketException)) {
-          listener.disconnected(failure);
+          listener.disconnected(0, failure);
         }
       }
     }
@@ -97,9 +120,9 @@ public final class LoopbackServer implements Closeable {
   @Override
   public void close() throws IOException {
     running.set(false);
-    Socket socket = peer;
-    if (socket != null) {
-      socket.close();
+    Peer current = peer;
+    if (current != null) {
+      current.socket().close();
     }
     if (serverSocket != null) {
       serverSocket.close();

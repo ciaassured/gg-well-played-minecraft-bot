@@ -5,6 +5,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import gg.wellplayed.jump.client.core.ControlledInputs;
 import gg.wellplayed.jump.client.core.EpisodeRecordingCoordinator;
 import gg.wellplayed.jump.client.core.EpisodeSequencer;
+import gg.wellplayed.jump.client.core.ExpectedDisconnects;
 import gg.wellplayed.jump.client.core.FramedProtobuf;
 import gg.wellplayed.jump.client.core.LoopbackServer;
 import gg.wellplayed.jump.client.core.ObservationMath;
@@ -63,6 +64,7 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
 
   private final EpisodeSequencer sequencer = new EpisodeSequencer();
   private final ControlledInputs inputs = new ControlledInputs();
+  private final ExpectedDisconnects expectedTrainerDisconnects = new ExpectedDisconnects();
   private final EpisodeRecordingCoordinator recordings =
       new EpisodeRecordingCoordinator(configuredReplayDirectory());
   private final LoopbackServer trainer =
@@ -83,7 +85,6 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
   private boolean replayStartupComplete;
   private boolean recordingSessionInitialized;
   private volatile boolean finalizerRunning;
-  private volatile boolean expectedTrainerDisconnect;
 
   @Override
   public void onInitializeClient() {
@@ -201,6 +202,8 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     }
     releaseAll(client);
     sequencer.abort();
+    LOGGER.info(
+        "Disconnecting from Paper to finalize Replay Mod recordings: {}", request.getReason());
     client.getConnection().getConnection().disconnect(Component.literal(request.getReason()));
   }
 
@@ -550,8 +553,7 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
               int retained = 0;
               int preserved = 0;
               long timeoutMillis = recordings.transferTimeoutMillis(FINALIZATION_TIMEOUT_MILLIS);
-              long deadlineNanos =
-                  System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+              long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
               List<EpisodeRecordingCoordinator.Artifact> artifacts = List.of();
               try {
                 artifacts = awaitFinalizedArtifacts(deadlineNanos);
@@ -706,12 +708,14 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
 
   private boolean sendBatchComplete(int expected, int offered, int retained, int preserved) {
     long requestId = recordings.finalizationRequestId();
-    if (requestId == 0 || !trainer.connected()) {
+    long connectionId = trainer.connectionId();
+    if (requestId == 0 || connectionId == 0) {
       return false;
     }
-    expectedTrainerDisconnect = true;
+    expectedTrainerDisconnects.expect(connectionId);
     boolean sent =
         trySendTrainer(
+            connectionId,
             envelope()
                 .setBatchComplete(
                     BatchComplete.newBuilder()
@@ -726,7 +730,7 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
                         .setReconnectingMinecraft(true))
                 .build());
     if (!sent) {
-      expectedTrainerDisconnect = false;
+      expectedTrainerDisconnects.cancel(connectionId);
     }
     return sent;
   }
@@ -775,8 +779,12 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
   }
 
   private boolean trySendTrainer(WireMessage message) {
+    return trySendTrainer(trainer.connectionId(), message);
+  }
+
+  private boolean trySendTrainer(long connectionId, WireMessage message) {
     try {
-      trainer.send(message);
+      trainer.send(connectionId, message);
       return true;
     } catch (IOException exception) {
       LOGGER.warn(
@@ -838,39 +846,52 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
 
   private final class TrainerListener implements LoopbackServer.Listener {
     @Override
-    public void connected() {
-      expectedTrainerDisconnect = false;
+    public void connected(long connectionId) {
       Minecraft.getInstance()
           .execute(
               () -> {
+                if (trainer.connectionId() != connectionId) {
+                  return;
+                }
                 Minecraft client = Minecraft.getInstance();
                 sendHandshakeIfReady(client);
               });
     }
 
     @Override
-    public void message(WireMessage message) {
-      Minecraft.getInstance().execute(() -> receiveTrainer(message, Minecraft.getInstance()));
-    }
-
-    @Override
-    public void disconnected(Throwable cause) {
+    public void message(long connectionId, WireMessage message) {
       Minecraft.getInstance()
           .execute(
               () -> {
+                if (trainer.connectionId() == connectionId) {
+                  receiveTrainer(message, Minecraft.getInstance());
+                }
+              });
+    }
+
+    @Override
+    public void disconnected(long connectionId, Throwable cause) {
+      boolean expected = connectionId > 0 && expectedTrainerDisconnects.consume(connectionId);
+      Minecraft.getInstance()
+          .execute(
+              () -> {
+                if (expected) {
+                  LOGGER.info("Trainer command connection closed normally");
+                  return;
+                }
                 Minecraft client = Minecraft.getInstance();
                 releaseAll(client);
                 sequencer.abort();
-                if (expectedTrainerDisconnect) {
-                  expectedTrainerDisconnect = false;
-                } else if (!recordings.finalizing() && client.getConnection() != null) {
+                if (!recordings.finalizing() && client.getConnection() != null) {
                   beginUnexpectedFinalization();
                   client
                       .getConnection()
                       .getConnection()
                       .disconnect(Component.literal("trainer disconnected unexpectedly"));
                 }
-                if (cause != null) {
+                if (cause == null) {
+                  LOGGER.warn("Trainer disconnected unexpectedly");
+                } else {
                   LOGGER.warn("Trainer disconnected: {}", cause.toString());
                 }
               });
