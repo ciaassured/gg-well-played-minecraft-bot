@@ -1,17 +1,18 @@
 package gg.wellplayed.jump.client.core;
 
+import com.google.protobuf.ByteString;
 import gg.wellplayed.jump.protocol.v1.Action;
 import gg.wellplayed.jump.protocol.v1.ActionRequest;
-import gg.wellplayed.jump.protocol.v1.CaptureRequest;
-import gg.wellplayed.jump.protocol.v1.ClientMode;
+import gg.wellplayed.jump.protocol.v1.CommandFinalize;
 import gg.wellplayed.jump.protocol.v1.ConnectionHello;
 import gg.wellplayed.jump.protocol.v1.EpisodePhase;
 import gg.wellplayed.jump.protocol.v1.EpisodeReady;
+import gg.wellplayed.jump.protocol.v1.EpisodeRecordingStatus;
 import gg.wellplayed.jump.protocol.v1.EpisodeResult;
 import gg.wellplayed.jump.protocol.v1.EpisodeState;
 import gg.wellplayed.jump.protocol.v1.ErrorCode;
 import gg.wellplayed.jump.protocol.v1.ResetRequest;
-import gg.wellplayed.jump.protocol.v1.Shutdown;
+import gg.wellplayed.jump.protocol.v1.RetentionAcknowledgement;
 import gg.wellplayed.jump.protocol.v1.TerminalReason;
 import gg.wellplayed.jump.protocol.v1.WireMessage;
 import java.io.ByteArrayInputStream;
@@ -23,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -37,19 +39,16 @@ public final class CoreTestMain {
     resetAndActionSequencingIsStrict();
     actionDeadlineAbortsInputs();
     observationsUseCollisionBoxFront();
-    replayCaptureFindsOnlyFinalizedFile();
+    episodeMarkersAndMultiFileFinalizationAreStrict();
     System.out.println("client core assertions: " + assertions);
   }
 
   private static void framingRoundTripsAndRejectsBadLengths() throws Exception {
     WireMessage original =
         WireMessage.newBuilder()
-            .setProtocolVersion(1)
+            .setProtocolVersion(2)
             .setConnectionHello(
-                ConnectionHello.newBuilder()
-                    .setProtocolVersion(1)
-                    .setSessionId("session")
-                    .setMode(ClientMode.CLIENT_MODE_TRAINING))
+                ConnectionHello.newBuilder().setProtocolVersion(2).setSessionId("session"))
             .build();
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     FramedProtobuf.write(bytes, original);
@@ -109,7 +108,7 @@ public final class CoreTestMain {
     sequencer.applyQueuedAction();
     EpisodeResult result =
         EpisodeResult.newBuilder()
-            .setProtocolVersion(1)
+            .setProtocolVersion(2)
             .setSessionId("session")
             .setEpisodeId(reset.getEpisodeId())
             .setServerTick(75)
@@ -182,50 +181,138 @@ public final class CoreTestMain {
     close(0.6 / Math.sqrt(2.0), diagonal.laneVelocity());
   }
 
-  private static void replayCaptureFindsOnlyFinalizedFile() throws Exception {
-    Path directory = Files.createTempDirectory("jump-replay-capture-test");
+  private static void episodeMarkersAndMultiFileFinalizationAreStrict() throws Exception {
+    Path directory = Files.createTempDirectory("jump-episode-recording-test");
     try {
       Path oldReplay = directory.resolve("old.mcpr");
-      writeReplay(oldReplay);
-      ReplayCaptureCoordinator coordinator = new ReplayCaptureCoordinator(directory);
-      CaptureRequest request =
-          CaptureRequest.newBuilder()
-              .setProtocolVersion(1)
-              .setRequestId(70)
-              .setSessionId("session")
-              .setCheckpointId("untrained")
-              .setEpisodeId(71)
-              .setSeed(ReplayCaptureCoordinator.SHOWCASE_SEED)
-              .build();
-      equal(ReplayCaptureCoordinator.BeginStatus.ACCEPTED, coordinator.begin(request, "session"));
-      equal(ReplayCaptureCoordinator.BeginStatus.IDEMPOTENT, coordinator.begin(request, "session"));
-      throwsCode(
-          ErrorCode.ERROR_CODE_INVALID_MESSAGE,
-          () -> coordinator.begin(request.toBuilder().setCheckpointId("other").build(), "session"));
+      writeReplay(oldReplay, "OLD_EPISODE");
+      FakeMarkers markers = new FakeMarkers();
+      EpisodeRecordingCoordinator coordinator = new EpisodeRecordingCoordinator(directory);
+      coordinator.beginSession("session", markers);
+
+      ResetRequest success = reset(70, 71, 100_000);
+      equal(
+          EpisodeRecordingCoordinator.BeginStatus.ACCEPTED,
+          coordinator.beginEpisode(success, markers));
+      equal(
+          EpisodeRecordingCoordinator.BeginStatus.IDEMPOTENT,
+          coordinator.beginEpisode(success, markers));
+      coordinator.completeEpisode(
+          success.getEpisodeId(), TerminalReason.TERMINAL_REASON_SUCCESS, markers);
+
+      ResetRequest failed = reset(72, 73, 100_001);
+      coordinator.beginEpisode(failed, markers);
+      coordinator.completeEpisode(
+          failed.getEpisodeId(), TerminalReason.TERMINAL_REASON_MISSED_JUMP, markers);
+      ResetRequest timedOut = reset(74, 75, 100_002);
+      coordinator.beginEpisode(timedOut, markers);
+      coordinator.completeEpisode(
+          timedOut.getEpisodeId(), TerminalReason.TERMINAL_REASON_TIME_LIMIT, markers);
+
+      ResetRequest overlapped = reset(76, 77, 100_003);
+      ResetRequest interrupted = reset(78, 79, 100_004);
+      coordinator.beginEpisode(overlapped, markers);
+      coordinator.beginEpisode(interrupted, markers);
+      coordinator.interruptActive(markers);
+
+      List<EpisodeRecordingCoordinator.Episode> episodes = coordinator.episodeSnapshot();
+      equal(5, episodes.size());
+      equal(
+          EpisodeRecordingStatus.EPISODE_RECORDING_STATUS_COMPLETE,
+          episodes.get(0).recordingStatus());
+      equal(TerminalReason.TERMINAL_REASON_SUCCESS, episodes.get(0).terminalReason());
+      equal(TerminalReason.TERMINAL_REASON_MISSED_JUMP, episodes.get(1).terminalReason());
+      equal(TerminalReason.TERMINAL_REASON_TIME_LIMIT, episodes.get(2).terminalReason());
+      equal(
+          EpisodeRecordingStatus.EPISODE_RECORDING_STATUS_PARTIAL,
+          episodes.get(3).recordingStatus());
+      equal(TerminalReason.TERMINAL_REASON_INFRASTRUCTURE_ERROR, episodes.get(4).terminalReason());
+      equal(EpisodeRecordingCoordinator.START_CUT_MARKER + "@0", markers.written.getFirst());
+      check(markers.written.stream().filter(value -> value.startsWith("_RM_SPLIT@")).count() == 5);
 
       coordinator.beginFinalization(
-          Shutdown.newBuilder()
-              .setProtocolVersion(1)
-              .setRequestId(72)
+          CommandFinalize.newBuilder()
+              .setProtocolVersion(2)
+              .setRequestId(80)
               .setSessionId("session")
-              .setEpisodeId(71)
-              .setReason("checkpoint showcase complete")
-              .setDisconnectMinecraft(true)
-              .setReconnectMinecraft(true)
-              .build());
+              .setReason("command complete")
+              .setTransferTimeoutSeconds(300)
+              .build(),
+          markers);
+      equal(300_000L, coordinator.transferTimeoutMillis(400_000L));
+      equal(5_000L, coordinator.transferTimeoutMillis(5_000L));
       Files.writeString(directory.resolve("broken.mcpr"), "not a replay", StandardCharsets.UTF_8);
-      Path captured = directory.resolve("captured.mcpr");
-      writeReplay(captured);
-      check(coordinator.pollFinalized().isEmpty());
-      ReplayCaptureCoordinator.Artifact artifact = coordinator.pollFinalized().orElseThrow();
-      equal(captured.toAbsolutePath().normalize(), artifact.replayFile());
-      equal("untrained", artifact.checkpointId());
-      equal(71L, artifact.episodeId());
-      equal(Files.size(captured), artifact.sizeBytes());
-      equal(32, artifact.sha256().length);
-      check(artifact.reconnectMinecraft());
+      Path volatileRecording = directory.resolve("recording/session.mcpr.tmp/changed");
+      Files.createDirectories(volatileRecording);
+      writeReplay(
+          volatileRecording.resolve("transient.mcpr"),
+          "JUMP_EPISODE_V2_0_"
+              + episodes.getFirst().episodeId()
+              + "_"
+              + episodes.getFirst().seed());
+      for (EpisodeRecordingCoordinator.Episode episode : episodes) {
+        writeReplay(
+            directory.resolve("episode-" + episode.ordinal() + ".mcpr"),
+            "JUMP_EPISODE_V2_"
+                + episode.ordinal()
+                + "_"
+                + episode.episodeId()
+                + "_"
+                + episode.seed());
+      }
+      check(coordinator.pollFinalizedArtifacts().isEmpty());
+      List<EpisodeRecordingCoordinator.Artifact> artifacts =
+          coordinator.pollFinalizedArtifacts().orElseThrow();
+      equal(5, artifacts.size());
+      equal(71L, artifacts.getFirst().episodeId());
+      equal(32, artifacts.getFirst().sha256().length);
+
+      EpisodeRecordingCoordinator.Artifact first = artifacts.getFirst();
+      coordinator.beginOffer(first);
+      throwsCode(
+          ErrorCode.ERROR_CODE_INVALID_MESSAGE,
+          () ->
+              coordinator.acknowledge(
+                  RetentionAcknowledgement.newBuilder()
+                      .setProtocolVersion(2)
+                      .setRequestId(80)
+                      .setSessionId("session")
+                      .setOrdinal(first.ordinal())
+                      .setEpisodeId(first.episodeId())
+                      .setSha256(ByteString.copyFrom(new byte[32]))
+                      .setRetained(true)
+                      .build()));
+      coordinator.acknowledge(
+          RetentionAcknowledgement.newBuilder()
+              .setProtocolVersion(2)
+              .setRequestId(80)
+              .setSessionId("session")
+              .setOrdinal(first.ordinal())
+              .setEpisodeId(first.episodeId())
+              .setSha256(ByteString.copyFrom(first.sha256()))
+              .setRetained(true)
+              .build());
+      check(coordinator.takeAcknowledgement().orElseThrow().retained());
+      coordinator.deleteRetainedArtifact(first);
+      check(!Files.exists(first.stagingPath()));
+
+      EpisodeRecordingCoordinator.Artifact second = artifacts.get(1);
+      coordinator.beginOffer(second);
+      coordinator.acknowledge(
+          RetentionAcknowledgement.newBuilder()
+              .setProtocolVersion(2)
+              .setRequestId(80)
+              .setSessionId("session")
+              .setOrdinal(second.ordinal())
+              .setEpisodeId(second.episodeId())
+              .setSha256(ByteString.copyFrom(second.sha256()))
+              .setRetained(false)
+              .setDetail("copy failed")
+              .build());
+      check(!coordinator.takeAcknowledgement().orElseThrow().retained());
+      check(Files.exists(second.stagingPath()));
       check(coordinator.finalizing());
-      coordinator.complete();
+      coordinator.completeFinalization();
       check(!coordinator.finalizing());
       check(!ReplayModStatus.startupReady());
       check(!ReplayModStatus.recording());
@@ -236,7 +323,7 @@ public final class CoreTestMain {
     }
   }
 
-  private static void writeReplay(Path path) throws IOException {
+  private static void writeReplay(Path path, String marker) throws IOException {
     try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(path))) {
       output.putNextEntry(new ZipEntry("metaData.json"));
       output.write("{}".getBytes(StandardCharsets.UTF_8));
@@ -244,6 +331,24 @@ public final class CoreTestMain {
       output.putNextEntry(new ZipEntry("recording.tmcpr"));
       output.write(new byte[] {1, 2, 3});
       output.closeEntry();
+      output.putNextEntry(new ZipEntry("markers.json"));
+      output.write(("[{\"name\":\"" + marker + "\"}]").getBytes(StandardCharsets.UTF_8));
+      output.closeEntry();
+    }
+  }
+
+  private static final class FakeMarkers implements EpisodeRecordingCoordinator.MarkerWriter {
+    private final List<String> written = new java.util.ArrayList<>();
+    private long duration = 100;
+
+    @Override
+    public long currentDurationMillis() {
+      return duration++;
+    }
+
+    @Override
+    public void addMarker(String name, int timeMillis) {
+      written.add(name + "@" + timeMillis);
     }
   }
 
@@ -257,7 +362,7 @@ public final class CoreTestMain {
 
   private static ResetRequest reset(long requestId, long episodeId, long seed) {
     return ResetRequest.newBuilder()
-        .setProtocolVersion(1)
+        .setProtocolVersion(2)
         .setRequestId(requestId)
         .setSessionId("session")
         .setEpisodeId(episodeId)
@@ -268,7 +373,7 @@ public final class CoreTestMain {
 
   private static EpisodeReady ready(ResetRequest reset, double gap) {
     return EpisodeReady.newBuilder()
-        .setProtocolVersion(1)
+        .setProtocolVersion(2)
         .setRequestId(reset.getRequestId())
         .setSessionId(reset.getSessionId())
         .setEpisodeId(reset.getEpisodeId())
@@ -288,7 +393,7 @@ public final class CoreTestMain {
   private static ActionRequest action(
       ResetRequest reset, long observationSequence, long actionSequence, Action action) {
     return ActionRequest.newBuilder()
-        .setProtocolVersion(1)
+        .setProtocolVersion(2)
         .setSessionId(reset.getSessionId())
         .setEpisodeId(reset.getEpisodeId())
         .setObservationSequence(observationSequence)
@@ -300,7 +405,7 @@ public final class CoreTestMain {
   private static EpisodeState state(
       ResetRequest reset, long serverTick, int elapsedTicks, EpisodePhase phase) {
     return EpisodeState.newBuilder()
-        .setProtocolVersion(1)
+        .setProtocolVersion(2)
         .setSessionId(reset.getSessionId())
         .setEpisodeId(reset.getEpisodeId())
         .setServerTick(serverTick)

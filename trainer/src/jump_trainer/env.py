@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Protocol
 
 import gymnasium as gym
 import numpy as np
@@ -17,6 +17,7 @@ from jump_trainer.config import (
     TRAIN_SEED_MAX,
     TRAIN_SEED_MIN,
 )
+from jump_trainer.console import emit
 from jump_trainer.errors import InfrastructureError
 from jump_trainer.messages import RawObservation
 from jump_trainer.normalization import OBSERVATION_SPACE, normalize_observation
@@ -24,6 +25,14 @@ from jump_trainer.wire import BenchmarkConnection, ConnectionFactory
 
 NOOP = 0
 JUMP = 1
+
+
+class EpisodeRecorder(Protocol):
+    def set_episode_context(self, **context: Any) -> None: ...
+
+    def episode_started(self, episode_id: int, seed: int) -> None: ...
+
+    def episode_finished(self, episode_id: int, info: dict[str, Any]) -> None: ...
 
 
 def transition_reward(
@@ -60,6 +69,8 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
         reset_retries: int = 3,
         connection_factory: ConnectionFactory | None = None,
         identifier_base: int | None = None,
+        episode_recorder: EpisodeRecorder | None = None,
+        owns_connection: bool = True,
     ) -> None:
         super().__init__()
         self.metadata = {"render_modes": []}
@@ -78,6 +89,8 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
         self._connection_factory = connection_factory or (
             lambda: BenchmarkConnection.connect(host, port, timeout)
         )
+        self._episode_recorder = episode_recorder
+        self._owns_connection = owns_connection
         self._connection: BenchmarkConnection | Any | None = None
         base = identifier_base if identifier_base is not None else time.time_ns()
         if base <= 0 or base >= 2**64 - 1_000_000:
@@ -87,6 +100,10 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
         self._active = False
         self._jump_requests = 0
         self._episode_return = 0.0
+
+    def set_recording_context(self, **context: Any) -> None:
+        if self._episode_recorder is not None:
+            self._episode_recorder.set_episode_context(**context)
 
     def reset(
         self,
@@ -120,6 +137,7 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
         self._active = True
         self._jump_requests = 0
         self._episode_return = 0.0
+        self._recording_callback("start", observation.episode_id, episode_seed)
         info = self._info(observation, episode_seed, previous=None)
         return normalize_observation(observation), info
 
@@ -162,11 +180,14 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
         if terminated or truncated:
             self._active = False
         info = self._info(current, None, previous=previous)
+        if terminated or truncated:
+            self._recording_callback("finish", current.episode_id, info)
         return normalize_observation(current), reward, terminated, truncated, info
 
     def close(self) -> None:
         if self._connection is not None:
-            self._connection.shutdown(self._allocate_identifier(), "trainer environment closed")
+            if self._owns_connection:
+                self._connection.shutdown(self._allocate_identifier(), "trainer environment closed")
             self._connection = None
         self._active = False
 
@@ -183,9 +204,24 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
     def _fail_episode(self) -> None:
         self._active = False
         self._observation = None
-        if self._connection is not None:
+        if self._connection is not None and self._owns_connection:
             self._connection.close()
             self._connection = None
+
+    def _recording_callback(self, kind: str, episode_id: int, value: Any) -> None:
+        if self._episode_recorder is None:
+            return
+        try:
+            if kind == "start":
+                self._episode_recorder.episode_started(episode_id, int(value))
+            else:
+                self._episode_recorder.episode_finished(episode_id, value)
+        except Exception as exception:
+            emit(
+                "recording",
+                "episode",
+                f"warning; could not persist {kind} metadata for {episode_id}: {exception}",
+            )
 
     def _info(
         self,

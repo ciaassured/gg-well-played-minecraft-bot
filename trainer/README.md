@@ -3,11 +3,11 @@
 This project owns seed selection, the loopback Protobuf client, Gymnasium reset
 and step semantics, reward and normalization, SB3 DQN training, checkpoint
 promotion, evaluation, and inference. It never starts Paper or Minecraft and it
-does not start Replay Mod or render video. Its capture command coordinates a
-separately started recording client, verifies each finalized Replay Mod file,
-and retains it with the training run.
+does not start Replay Mod or render video. Every command coordinates finalization
+with the persistent client, validates each Replay Mod archive and its reported
+size and digest, and atomically retains it before acknowledgement.
 
-Start `benchmark-server` and the training-mode `client-mod` first, then use:
+Start `benchmark-server` and the unified `client-mod` first, then use:
 
 ```console
 nix develop ./trainer
@@ -19,7 +19,6 @@ nix run ./trainer#evaluate -- --policy noop --suite validation
 nix run ./trainer#evaluate -- --checkpoint <checkpoint.zip> --suite test
 nix run ./trainer#train
 nix run ./trainer#run -- --run <run-directory>
-nix run ./trainer#capture -- <run-directory>
 ```
 
 `smoke` must complete showcase seed `100000` with one deterministic near-wall
@@ -27,7 +26,12 @@ JUMP request; a timeout, missed jump, or extra request makes the command fail.
 
 Runs are written beneath `trainer/runs` by default. Each run contains its
 configuration, metrics, untrained/latest/best checkpoints, validation promotion
-history, captured `.mcpr` files and metadata, and a reserved video directory.
+history, and historical episode recordings beneath
+`replays/train-<UTC timestamp>/`. The `smoke`, `evaluate`, and `run` commands
+retain recordings beneath
+`trainer/recordings/<command>/<UTC timestamp>/`; set
+`JUMP_TRAINER_RECORDING_ROOT` to relocate that root. Each command directory has
+one manifest and sequential `<ordinal>-seed-<seed>.mcpr` files.
 Training uses consistent one-line `[train]` and `[evaluate]` records instead of
 SB3's box tables. It prints its run directory immediately, reports learning
 every 250 timesteps with recent episode metrics, and reports evaluation every
@@ -41,9 +45,14 @@ Pressing Ctrl-C during learning saves the current in-memory model as
 `checkpoints/latest.zip`, writes `metrics/training-interrupted.json`, and exits
 without a traceback. A later `train` command always starts a new run; use
 `run` or `evaluate` to load a checkpoint from an interrupted run.
-Stop the training client and start `client-mod` in recording mode before using
-`capture`; every retained checkpoint is rerun on showcase seed `100000` without
-learning, then Replay Mod is finalized before the next checkpoint reconnects.
+
+The trainer's canonical copy is published through a temporary destination only
+after ZIP, size, and SHA-256 validation. Failed transfers remove temporary
+destinations and leave client staging intact for recovery. Recording failures
+are warnings rather than ML failures. Ctrl-C preserves the trainer's exit
+status, marks an in-progress episode partial, and still requests command
+finalization. `JUMP_TRAINER_RECORDING_TIMEOUT` or `--recording-timeout` changes
+the default five-minute wait.
 
 A checkpoint evaluation on the `test` suite also evaluates both scripted
 baselines and persists the four final acceptance predicates. If any predicate

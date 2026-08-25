@@ -278,8 +278,8 @@ public final class EpisodeSequencer {
   }
 
   private void requireVersion(int version) throws ProtocolViolation {
-    if (version != 1) {
-      throw violation(ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 1");
+    if (version != 2) {
+      throw violation(ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 2");
     }
   }
 

@@ -30,7 +30,8 @@ import org.slf4j.LoggerFactory;
 public final class ReplayRendererMod implements ClientModInitializer {
   private static final Logger LOGGER = LoggerFactory.getLogger("jump-replay-renderer");
   private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(90);
-  private static final int REPLAY_WARMUP_TICKS = 3;
+  private static final int SHORT_REPLAY_MILLIS = 1_000;
+  private static final int SHORT_REPLAY_SETTLE_MILLIS = 500;
   private static final BlockPos ARENA_FLOOR_POSITION = new BlockPos(11, 300, 0);
   private static final BlockPos ARENA_WALL_POSITION = new BlockPos(14, 301, 0);
   private static final double CAMERA_X = 11.5;
@@ -43,7 +44,6 @@ public final class ReplayRendererMod implements ClientModInitializer {
   private boolean replayStartupCallbackRegistered;
   private boolean replayStartupComplete;
   private boolean replayOpenQueued;
-  private int replayReadyTicks;
   private Path input;
   private Path output;
   private StatusFile status;
@@ -123,37 +123,19 @@ public final class ReplayRendererMod implements ClientModInitializer {
     }
     ReplayHandler handler = replayModReplay.getReplayHandler();
     if (handler == null || client.level == null || handler.getCameraEntity() == null) {
-      replayReadyTicks = 0;
       return;
     }
-    // Fast policies produce replays only a few seconds long. Wait for the actual scene instead of
-    // consuming most of the replay on a fixed delay that can reach playback's end and stop ticks.
     if (!replaySceneReady(client, handler)) {
-      replayReadyTicks = 0;
       return;
     }
-    replayReadyTicks++;
-    if (replayReadyTicks <= REPLAY_WARMUP_TICKS) {
-      if (replayReadyTicks == 1) {
-        try {
-          status.write("warming", "waiting for replay chunks to settle", 0, 0);
-        } catch (Throwable failure) {
-          renderQueued.set(true);
-          fail(failure);
-        }
-      }
-      if (replayReadyTicks == REPLAY_WARMUP_TICKS) {
-        LOGGER.info(
-            "Replay ready: camera=({}, {}, {}), players={}, arena floor={}, arena wall={}",
-            handler.getCameraEntity().getX(),
-            handler.getCameraEntity().getY(),
-            handler.getCameraEntity().getZ(),
-            client.level.players().size(),
-            client.level.getBlockState(ARENA_FLOOR_POSITION),
-            client.level.getBlockState(ARENA_WALL_POSITION));
-      }
-      return;
-    }
+    LOGGER.info(
+        "Replay ready: camera=({}, {}, {}), players={}, arena floor={}, arena wall={}",
+        handler.getCameraEntity().getX(),
+        handler.getCameraEntity().getY(),
+        handler.getCameraEntity().getZ(),
+        client.level.players().size(),
+        client.level.getBlockState(ARENA_FLOOR_POSITION),
+        client.level.getBlockState(ARENA_WALL_POSITION));
     if (renderQueued.compareAndSet(false, true)) {
       ReplayMod.instance.runLaterWithoutLock(() -> render(handler));
     }
@@ -172,15 +154,45 @@ public final class ReplayRendererMod implements ClientModInitializer {
       SPTimeline path = new SPTimeline();
       path.setDefaultInterpolatorType(InterpolatorType.LINEAR);
       long timelineEnd = plan.timelineDurationMillis();
+      int discardedFrames = 0;
+      if (plan.timelineDurationMillis() < SHORT_REPLAY_MILLIS) {
+        long playbackPreroll = plan.timelineDurationMillis();
+        long discardedMillis = playbackPreroll + SHORT_REPLAY_SETTLE_MILLIS;
+        timelineEnd = discardedMillis + plan.timelineDurationMillis();
+        int settledReplayTime = Math.max(plan.startMillis(), plan.endMillis() - 1);
+        path.addTimeKeyframe(0L, plan.startMillis());
+        path.addTimeKeyframe(playbackPreroll, settledReplayTime);
+        path.addTimeKeyframe(discardedMillis, settledReplayTime);
+        path.addTimeKeyframe(timelineEnd, settledReplayTime);
+        discardedFrames =
+            Math.max(
+                1,
+                (int)
+                    Math.ceil(discardedMillis * plan.framesPerSecond() / 1_000.0D));
+        LOGGER.info(
+            "Short replay will pre-render through {}ms and discard {} startup frames",
+            settledReplayTime,
+            discardedFrames);
+      } else {
+        path.addTimeKeyframe(0L, plan.startMillis());
+        path.addTimeKeyframe(timelineEnd, plan.endMillis());
+      }
       configureCameraPath(path, handler, timelineEnd);
-      path.addTimeKeyframe(0L, plan.startMillis());
-      path.addTimeKeyframe(timelineEnd, plan.endMillis());
       path.getPositionPath().setActive(true);
       path.getTimePath().setActive(true);
       path.getPositionPath().updateAll();
       path.getTimePath().updateAll();
 
       String ffmpeg = requirePath(System.getProperty("jump.renderer.ffmpeg"), "FFmpeg").toString();
+      String exportArguments = EncodingPreset.MP4_CUSTOM.getValue();
+      if (discardedFrames > 0) {
+        exportArguments =
+            exportArguments.replace(
+                "-an -c:v",
+                "-an -vf \"trim=start_frame="
+                    + discardedFrames
+                    + ",setpts=PTS-STARTPTS\" -c:v");
+      }
       RenderSettings settings =
           new RenderSettings(
               RenderMethod.DEFAULT,
@@ -203,7 +215,7 @@ public final class ReplayRendererMod implements ClientModInitializer {
               false,
               AntiAliasing.NONE,
               ffmpeg,
-              EncodingPreset.MP4_CUSTOM.getValue(),
+              exportArguments,
               true);
       String[] incompatibility = VideoRenderer.checkCompat(settings);
       if (incompatibility != null) {
@@ -216,6 +228,7 @@ public final class ReplayRendererMod implements ClientModInitializer {
       if (!completed) {
         throw new IllegalStateException("Replay Mod cancelled the render");
       }
+      frames = Math.max(1, frames - discardedFrames);
       if (!Files.isRegularFile(output) || Files.size(output) == 0) {
         throw new IllegalStateException("Replay Mod returned without a video file");
       }

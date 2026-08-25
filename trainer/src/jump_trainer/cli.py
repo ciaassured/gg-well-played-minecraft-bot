@@ -11,7 +11,6 @@ from typing import Any
 
 from stable_baselines3 import DQN
 
-from jump_trainer.capture import capture_retained_checkpoints
 from jump_trainer.config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -29,6 +28,7 @@ from jump_trainer.evaluation import (
     noop_policy,
     scripted_one_jump_policy,
 )
+from jump_trainer.recording import RecordingSession, recording_directory
 from jump_trainer.run_directory import (
     RunDirectory,
     atomic_write_json,
@@ -41,12 +41,16 @@ FINAL_ACCEPTANCE_FAILURE_EXIT_CODE = 3
 
 def _add_connection_arguments(
     parser: argparse.ArgumentParser,
-    timeout_default: float = 5.0,
 ) -> None:
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--timeout", type=float, default=timeout_default)
+    parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--reset-retries", type=int, default=3)
+    parser.add_argument(
+        "--recording-timeout",
+        type=float,
+        default=float(os.environ.get("JUMP_TRAINER_RECORDING_TIMEOUT", "300")),
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -85,20 +89,30 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output", type=Path)
     _add_connection_arguments(run)
 
-    capture = commands.add_parser(
-        "capture", help="record untrained and promoted checkpoint showcases"
-    )
-    capture.add_argument("run", type=Path)
-    _add_connection_arguments(capture, timeout_default=60.0)
     return parser
 
 
-def _environment(arguments: argparse.Namespace) -> MinecraftJumpEnv:
+def _recording(arguments: argparse.Namespace, command: str) -> RecordingSession:
+    directory = recording_directory(command)
+    return RecordingSession(
+        command,
+        directory,
+        host=str(arguments.host),
+        port=int(arguments.port),
+        message_timeout=float(arguments.timeout),
+        recording_timeout=float(arguments.recording_timeout),
+    )
+
+
+def _environment(arguments: argparse.Namespace, recording: RecordingSession) -> MinecraftJumpEnv:
     return MinecraftJumpEnv(
         host=str(arguments.host),
         port=int(arguments.port),
         timeout=float(arguments.timeout),
         reset_retries=int(arguments.reset_retries),
+        connection_factory=recording.connection,
+        episode_recorder=recording,
+        owns_connection=False,
     )
 
 
@@ -113,39 +127,48 @@ def _default_evaluation_output(policy_id: str, suite: str, checkpoint: Path | No
 
 def _evaluate(arguments: argparse.Namespace) -> dict[str, Any]:
     seeds = seeds_for_suite(str(arguments.suite))
-    env = _environment(arguments)
     checkpoint = Path(arguments.checkpoint).resolve() if arguments.checkpoint else None
-    try:
-        if arguments.policy:
-            policy_id = str(arguments.policy)
-            policy = noop_policy if policy_id == "noop" else always_jump_policy
-            report = evaluate_policy(env, policy, seeds, policy_id, str(arguments.suite))
-            result: dict[str, Any] = {"evaluation": report.as_dict()}
-        else:
-            if checkpoint is None or not checkpoint.is_file():
-                raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
-            model = DQN.load(checkpoint, device="cpu")
-            policy_id = checkpoint.stem
-            report = evaluate_policy(
-                env, model_policy(model), seeds, policy_id, str(arguments.suite)
+    with _recording(arguments, "evaluate") as recording:
+        env = _environment(arguments, recording)
+        try:
+            if arguments.policy:
+                policy_id = str(arguments.policy)
+                policy = noop_policy if policy_id == "noop" else always_jump_policy
+                env.set_recording_context(policy_id=policy_id, suite=str(arguments.suite))
+                report = evaluate_policy(env, policy, seeds, policy_id, str(arguments.suite))
+                result: dict[str, Any] = {"evaluation": report.as_dict()}
+            else:
+                if checkpoint is None or not checkpoint.is_file():
+                    raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
+                model = DQN.load(checkpoint, device="cpu")
+                policy_id = checkpoint.stem
+                env.set_recording_context(
+                    policy_id=policy_id,
+                    suite=str(arguments.suite),
+                    checkpoint=str(checkpoint),
+                )
+                report = evaluate_policy(
+                    env, model_policy(model), seeds, policy_id, str(arguments.suite)
+                )
+                result = {"evaluation": report.as_dict()}
+                if arguments.suite == "test":
+                    env.set_recording_context(policy_id="noop", suite="test")
+                    noop = evaluate_policy(env, noop_policy, seeds, "noop", "test")
+                    env.set_recording_context(policy_id="always-jump", suite="test")
+                    always = evaluate_policy(env, always_jump_policy, seeds, "always-jump", "test")
+                    result["baselines"] = {
+                        "noop": noop.as_dict(),
+                        "always_jump": always.as_dict(),
+                    }
+                    result["acceptance"] = final_passing_result(report, noop, always)
+            output = arguments.output or _default_evaluation_output(
+                policy_id, str(arguments.suite), checkpoint
             )
-            result = {"evaluation": report.as_dict()}
-            if arguments.suite == "test":
-                noop = evaluate_policy(env, noop_policy, seeds, "noop", "test")
-                always = evaluate_policy(env, always_jump_policy, seeds, "always-jump", "test")
-                result["baselines"] = {
-                    "noop": noop.as_dict(),
-                    "always_jump": always.as_dict(),
-                }
-                result["acceptance"] = final_passing_result(report, noop, always)
-        output = arguments.output or _default_evaluation_output(
-            policy_id, str(arguments.suite), checkpoint
-        )
-        atomic_write_json(Path(output), result)
-        result["report_file"] = str(Path(output).resolve())
-        return result
-    finally:
-        env.close()
+            atomic_write_json(Path(output), result)
+            result["report_file"] = str(Path(output).resolve())
+        finally:
+            env.close()
+    return result
 
 
 def _run(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -161,36 +184,45 @@ def _run(arguments: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("episodes must be positive")
     model = DQN.load(checkpoint, device="cpu")
     seeds = tuple(int(arguments.seed) + offset for offset in range(int(arguments.episodes)))
-    env = _environment(arguments)
-    try:
-        report = evaluate_policy(env, model_policy(model), seeds, checkpoint.stem, "run")
-    finally:
-        env.close()
-    result = {"checkpoint": str(checkpoint), "evaluation": report.as_dict()}
-    output = arguments.output
-    if output is None and run_directory is not None:
-        output = run_directory.metrics / "latest-run.json"
-    if output is not None:
-        atomic_write_json(Path(output), result)
-        result["report_file"] = str(Path(output).resolve())
+    with _recording(arguments, "run") as recording:
+        env = _environment(arguments, recording)
+        env.set_recording_context(
+            policy_id=checkpoint.stem,
+            suite="run",
+            checkpoint=str(checkpoint),
+        )
+        try:
+            report = evaluate_policy(env, model_policy(model), seeds, checkpoint.stem, "run")
+            result = {"checkpoint": str(checkpoint), "evaluation": report.as_dict()}
+            output = arguments.output
+            if output is None and run_directory is not None:
+                output = run_directory.metrics / "latest-run.json"
+            if output is not None:
+                atomic_write_json(Path(output), result)
+                result["report_file"] = str(Path(output).resolve())
+        finally:
+            env.close()
     return result
 
 
 def _smoke(arguments: argparse.Namespace) -> dict[str, Any]:
-    env = _environment(arguments)
-    try:
-        report = evaluate_policy(
-            env,
-            scripted_one_jump_policy(),
-            (int(arguments.seed),),
-            "one-jump-smoke",
-            "smoke",
-        )
-        if report.success_count != 1 or report.episodes[0].jump_requests != 1:
-            raise RuntimeError("scripted one-jump smoke episode did not succeed exactly once")
-        return {"smoke": "passed", "evaluation": report.as_dict()}
-    finally:
-        env.close()
+    with _recording(arguments, "smoke") as recording:
+        env = _environment(arguments, recording)
+        env.set_recording_context(policy_id="one-jump-smoke", suite="smoke")
+        try:
+            report = evaluate_policy(
+                env,
+                scripted_one_jump_policy(),
+                (int(arguments.seed),),
+                "one-jump-smoke",
+                "smoke",
+            )
+            if report.success_count != 1 or report.episodes[0].jump_requests != 1:
+                raise RuntimeError("scripted one-jump smoke episode did not succeed exactly once")
+            result = {"smoke": "passed", "evaluation": report.as_dict()}
+        finally:
+            env.close()
+    return result
 
 
 def _train(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -201,27 +233,11 @@ def _train(arguments: argparse.Namespace) -> dict[str, Any]:
         host=str(arguments.host),
         port=int(arguments.port),
         message_timeout_seconds=float(arguments.timeout),
+        recording_timeout_seconds=float(arguments.recording_timeout),
         reset_retries=int(arguments.reset_retries),
     )
     run = train(config, Path(arguments.run_root))
     return {"status": "complete", "run_directory": str(run.root)}
-
-
-def _capture(arguments: argparse.Namespace) -> dict[str, Any]:
-    run = RunDirectory.open(Path(arguments.run))
-    manifest = capture_retained_checkpoints(
-        run,
-        host=str(arguments.host),
-        port=int(arguments.port),
-        timeout=float(arguments.timeout),
-        reset_retries=int(arguments.reset_retries),
-    )
-    return {
-        "status": manifest["status"],
-        "run_directory": str(run.root),
-        "capture_directory": manifest["capture_directory"],
-        "capture_count": len(manifest["captures"]),
-    }
 
 
 def _final_acceptance_failed(result: dict[str, Any]) -> bool:
@@ -240,8 +256,6 @@ def main() -> None:
             result = _train(arguments)
         elif arguments.command == "run":
             result = _run(arguments)
-        elif arguments.command == "capture":
-            result = _capture(arguments)
         else:
             raise AssertionError(f"unhandled command: {arguments.command}")
     except (InfrastructureError, FileNotFoundError, ValueError, RuntimeError) as exception:

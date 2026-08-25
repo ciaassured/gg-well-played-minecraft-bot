@@ -27,6 +27,7 @@ from jump_trainer.evaluation import (
     model_policy,
     promotion_key,
 )
+from jump_trainer.recording import RecordingSession, recording_directory
 from jump_trainer.run_directory import RunDirectory
 
 TRAIN_PROGRESS_TIMESTEP_INTERVAL = 250
@@ -168,6 +169,13 @@ def _validate_candidate(
     model: DQN,
     step: int,
 ) -> EvaluationReport:
+    env.set_recording_context(
+        phase="validation",
+        policy_id=f"dqn-step-{step:08d}",
+        suite="validation",
+        checkpoint=str(run.candidate_checkpoint(step)),
+        training_step=step,
+    )
     report = evaluate_policy(
         env,
         model_policy(model),
@@ -214,11 +222,23 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
     )
     run.write_json("versions.json", _versions())
     _log("run", f"created; directory={run.root.resolve()}")
+    recording = RecordingSession(
+        "train",
+        recording_directory("train", run=run),
+        host=config.host,
+        port=config.port,
+        message_timeout=config.message_timeout_seconds,
+        recording_timeout=config.recording_timeout_seconds,
+        context={"run_directory": str(run.root)},
+    )
     env = MinecraftJumpEnv(
         host=config.host,
         port=config.port,
         timeout=config.message_timeout_seconds,
         reset_retries=config.reset_retries,
+        connection_factory=recording.connection,
+        episode_recorder=recording,
+        owns_connection=False,
     )
     model = build_model(env, config)
     _log(
@@ -237,6 +257,8 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
     history: list[dict[str, Any]] = []
     best_key: tuple[int, float, float] | None = None
     progress = TrainingProgressCallback(config.total_timesteps)
+    recording_interrupted = False
+    command_status = "failed"
 
     try:
         model.save(run.untrained_checkpoint)
@@ -280,6 +302,13 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
             if vector_env is None:
                 raise RuntimeError("DQN lost its training environment")
             model.set_env(vector_env, force_reset=True)
+            env.set_recording_context(
+                phase="training",
+                policy_id="dqn-training",
+                suite="training",
+                training_step=model.num_timesteps,
+                next_validation_step=target_step,
+            )
             model.learn(
                 total_timesteps=chunk,
                 reset_num_timesteps=False,
@@ -339,6 +368,7 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
             f"complete; timesteps={model.num_timesteps}, promotions={len(history)}, "
             f"best={run.best_checkpoint.relative_to(run.root)}",
         )
+        command_status = "complete"
     except InfrastructureError as exception:
         model.save(run.latest_checkpoint)
         run.write_json(
@@ -352,6 +382,8 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
         )
         raise
     except KeyboardInterrupt:
+        recording_interrupted = True
+        command_status = "interrupted"
         model.save(run.latest_checkpoint)
         run.write_json(
             "metrics/training-interrupted.json",
@@ -369,4 +401,8 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
         raise
     finally:
         env.close()
+        recording.finish(
+            interrupted=recording_interrupted,
+            command_status=command_status,
+        )
     return run

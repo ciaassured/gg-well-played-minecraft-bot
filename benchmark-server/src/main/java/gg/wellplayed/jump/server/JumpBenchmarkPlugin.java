@@ -2,7 +2,6 @@ package gg.wellplayed.jump.server;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import gg.wellplayed.jump.protocol.v1.ActionApplied;
-import gg.wellplayed.jump.protocol.v1.ClientMode;
 import gg.wellplayed.jump.protocol.v1.ConnectionHello;
 import gg.wellplayed.jump.protocol.v1.ConnectionReady;
 import gg.wellplayed.jump.protocol.v1.EpisodePhase;
@@ -52,7 +51,7 @@ import org.bukkit.plugin.messaging.PluginMessageListener;
 /** Paper entry point for the authoritative one-block jump benchmark. */
 public final class JumpBenchmarkPlugin extends JavaPlugin
     implements PluginMessageListener, Listener {
-  static final int PROTOCOL_VERSION = 1;
+  static final int PROTOCOL_VERSION = 2;
   static final int MAX_PAYLOAD_BYTES = 1024 * 1024;
   static final String CHANNEL = "jump:control";
 
@@ -69,7 +68,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
     getServer().getPluginManager().registerEvents(this, this);
     initialSpawn = arena.initialize(getServer().getWorlds().getFirst());
     getServer().getScheduler().runTaskTimer(this, this::tick, 1L, 1L);
-    getLogger().info("Jump benchmark enabled (protocol v1, Paper 26.2)");
+    getLogger().info("Jump benchmark enabled (protocol v2, Paper 26.2)");
   }
 
   @Override
@@ -105,7 +104,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
       return;
     }
     if (message.getProtocolVersion() != PROTOCOL_VERSION) {
-      sendError(player, null, ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 1");
+      sendError(player, null, ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 2");
       return;
     }
 
@@ -139,16 +138,12 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
                 + player.getName()
                 + " for session "
                 + hello.getSessionId());
-    if (hello.getProtocolVersion() != PROTOCOL_VERSION
-        || hello.getSessionId().isBlank()
-        || hello.getMode() == ClientMode.CLIENT_MODE_UNSPECIFIED) {
+    if (hello.getProtocolVersion() != PROTOCOL_VERSION || hello.getSessionId().isBlank()) {
       sendError(player, null, ErrorCode.ERROR_CODE_INVALID_MESSAGE, "invalid connection hello");
       return;
     }
     PlayerSession prior = sessions.get(player.getUniqueId());
-    if (prior != null
-        && prior.sessionId.equals(hello.getSessionId())
-        && prior.mode == hello.getMode()) {
+    if (prior != null && prior.sessionId.equals(hello.getSessionId())) {
       sendConnectionReady(prior, hello.getClientTick());
       return;
     }
@@ -156,7 +151,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
     if (prior != null) {
       prior.controller.abortInfrastructure();
     }
-    PlayerSession session = new PlayerSession(player, hello.getSessionId(), hello.getMode());
+    PlayerSession session = new PlayerSession(player, hello.getSessionId());
     sessions.put(player.getUniqueId(), session);
     sendConnectionReady(session, hello.getClientTick());
   }
@@ -177,7 +172,6 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
                 ConnectionReady.newBuilder()
                     .setProtocolVersion(PROTOCOL_VERSION)
                     .setSessionId(session.sessionId)
-                    .setMode(session.mode)
                     .setMinecraftVersion("26.2")
                     .setClientTick(clientTick)
                     .setServerTick(serverTick))
@@ -535,16 +529,14 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
   private static final class PlayerSession {
     private final Player player;
     private final String sessionId;
-    private final ClientMode mode;
     private final EpisodeController controller = new EpisodeController();
     private EpisodeReady cachedReady;
     private long resetClientTick;
     private double expectedSpawnX;
 
-    private PlayerSession(Player player, String sessionId, ClientMode mode) {
+    private PlayerSession(Player player, String sessionId) {
       this.player = player;
       this.sessionId = sessionId;
-      this.mode = mode;
     }
 
     private long episodeId() {

@@ -15,15 +15,24 @@ nix develop ./replay-renderer
 nix build ./replay-renderer
 nix flake check ./replay-renderer
 (cd replay-renderer && nix fmt)
-nix run ./replay-renderer#render -- <replay-or-run-directory>
+nix run ./replay-renderer#render -- <recording.mcpr-or-directory>
 ```
 
-For a training run, recordings are discovered below `<run>/replays` and videos
-are written below `<run>/videos` with the same relative names. For one `.mcpr`,
-the output goes into a sibling `videos/` directory. Each invocation validates
-ZIP integrity, required Replay Mod members, and metadata before starting
-Minecraft. Successful output must contain a playable video stream with positive
-duration; all results and failures are recorded in `render-manifest.json`.
+One `.mcpr` input produces output in a sibling `videos/` directory by default.
+A directory input recursively renders every `.mcpr` beneath exactly that
+directory and writes to `<source>/videos/`, preserving each relative path. The
+renderer performs no trainer-run discovery and never searches a parent or
+sibling directory. `--output-dir` overrides either default. Each invocation
+validates ZIP integrity, required Replay Mod members, and metadata before
+starting Minecraft. Successful output must contain a playable video stream with
+positive duration; all results and failures are recorded in
+`render-manifest.json`.
+
+Replay Mod can finish a sub-second split archive before its first-person chunk
+meshes become renderable. For those archives only, the renderer preplays and
+settles the recorded endpoint off-output, then holds that valid view for the
+archive's original duration. Longer recordings retain their original timeline
+and visible movement.
 
 The first run downloads the pinned Minecraft runtime into
 `replay-renderer/runtime`. Set `JUMP_RENDERER_RUNTIME` to move that mutable cache.

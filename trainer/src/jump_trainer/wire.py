@@ -20,14 +20,32 @@ MAX_MESSAGE_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
-class CaptureArtifact:
+class RecordingArtifact:
     request_id: int
     session_id: str
-    checkpoint_id: str
+    ordinal: int
     episode_id: int
-    replay_file: Path
+    seed: int
+    recording_status: int
+    terminal_reason: int
+    staging_path: Path
     sha256: bytes
     size_bytes: int
+
+
+@dataclass(frozen=True)
+class RecordingBatch:
+    request_id: int
+    session_id: str
+    expected_artifacts: int
+    offered_artifacts: int
+    retained_artifacts: int
+    preserved_artifacts: int
+    warnings: tuple[str, ...]
+    reconnecting_minecraft: bool
+
+
+ArtifactHandler = Callable[[RecordingArtifact], tuple[bool, str]]
 
 
 class MessageTransport(Protocol):
@@ -81,6 +99,11 @@ class SocketMessageTransport:
             raise ProtocolStateError("Fabric sent invalid Protobuf") from exception
         return message
 
+    def set_timeout(self, timeout: float | None) -> float | None:
+        previous = self._connection.gettimeout()
+        self._connection.settimeout(timeout)
+        return previous
+
     def _read_exact(self, size: int) -> bytes:
         chunks = bytearray()
         while len(chunks) < size:
@@ -105,46 +128,33 @@ class SocketMessageTransport:
 class BenchmarkConnection:
     """One validated Python-to-Fabric session."""
 
-    def __init__(
-        self,
-        transport: MessageTransport,
-        expected_mode: int = pb.CLIENT_MODE_TRAINING,
-    ) -> None:
+    def __init__(self, transport: MessageTransport) -> None:
         self._transport = transport
-        self.expected_mode = expected_mode
         self.session_id = ""
         self.client_tick = 0
         self.server_tick = 0
         self.current_episode_id = 0
-        self._capture_request: Any | None = None
+        self._episode_active = False
+        self._episode_count = 0
         self._closed = False
+        self._finalized = False
         self._handshake()
 
     @classmethod
-    def connect(
-        cls,
-        host: str,
-        port: int,
-        timeout: float,
-        expected_mode: int = pb.CLIENT_MODE_TRAINING,
-    ) -> BenchmarkConnection:
-        return cls(SocketMessageTransport.connect(host, port, timeout), expected_mode)
+    def connect(cls, host: str, port: int, timeout: float) -> BenchmarkConnection:
+        return cls(SocketMessageTransport.connect(host, port, timeout))
 
-    def _handshake(self, initial_message: Any | None = None) -> None:
+    def _handshake(self) -> None:
         hello: Any | None = None
         ready: Any | None = None
         while hello is None or ready is None:
-            if initial_message is None:
-                message = self._receive()
-            else:
-                message = initial_message
-                initial_message = None
+            message = self._receive()
             case = message.WhichOneof("payload")
             if case == "connection_hello":
                 hello = message.connection_hello
                 self._require_version(hello.protocol_version, "connection hello")
-                if not hello.session_id or hello.mode != self.expected_mode:
-                    raise ProtocolStateError("Fabric hello has the wrong session or client mode")
+                if not hello.session_id:
+                    raise ProtocolStateError("Fabric hello has a blank session id")
                 self.session_id = str(hello.session_id)
                 self.client_tick = int(hello.client_tick)
             elif case == "connection_ready":
@@ -153,11 +163,7 @@ class BenchmarkConnection:
             else:
                 raise ProtocolStateError(f"unexpected {case or 'empty'} message during handshake")
 
-        if (
-            ready.session_id != self.session_id
-            or ready.mode != self.expected_mode
-            or ready.minecraft_version != "26.2"
-        ):
+        if ready.session_id != self.session_id or ready.minecraft_version != "26.2":
             raise ProtocolStateError("Paper acknowledgement does not match the Fabric session")
         self.client_tick = max(self.client_tick, int(ready.client_tick))
         self.server_tick = int(ready.server_tick)
@@ -169,6 +175,8 @@ class BenchmarkConnection:
         seed: int,
         retries: int,
     ) -> RawObservation:
+        if self._finalized:
+            raise ProtocolStateError("cannot reset after command recording finalization")
         request = pb.ResetRequest(
             protocol_version=PROTOCOL_VERSION,
             request_id=request_id,
@@ -212,6 +220,8 @@ class BenchmarkConnection:
         if ready is None or observation is None:
             raise ProtocolStateError("reset completed without readiness and initial observation")
         self.current_episode_id = episode_id
+        self._episode_active = True
+        self._episode_count += 1
         self.client_tick = observation.client_tick
         self.server_tick = observation.server_tick
         return observation
@@ -251,122 +261,200 @@ class BenchmarkConnection:
                 self._validate_step_observation(observation, request)
                 self.client_tick = observation.client_tick
                 self.server_tick = observation.server_tick
+                if observation.phase in {
+                    pb.EPISODE_PHASE_TERMINAL,
+                    pb.EPISODE_PHASE_ABORTED,
+                }:
+                    self._episode_active = False
                 return observation
             elif case in {"connection_hello", "connection_ready"}:
                 continue
             else:
                 raise ProtocolStateError(f"unexpected {case or 'empty'} message while stepping")
 
-    def begin_capture(
+    def finalize_recordings(
         self,
         request_id: int,
-        checkpoint_id: str,
-        episode_id: int,
-        seed: int,
-    ) -> None:
-        if self.expected_mode != pb.CLIENT_MODE_RECORDING:
-            raise ProtocolStateError("capture requires a recording-mode connection")
-        if self._capture_request is not None:
-            raise ProtocolStateError("another replay capture is already active")
-        if request_id <= 0 or episode_id <= 0 or not checkpoint_id:
-            raise ValueError("capture identifiers must be positive and non-empty")
-        request = pb.CaptureRequest(
+        *,
+        interrupted: bool,
+        timeout: float,
+        artifact_handler: ArtifactHandler,
+    ) -> RecordingBatch:
+        if self._closed:
+            raise InfrastructureError("cannot finalize recordings on a closed connection")
+        if self._finalized:
+            raise ProtocolStateError("command recordings were already finalized")
+        if request_id <= 0:
+            raise ValueError("finalization request id must be positive")
+        if timeout <= 0 or timeout > 2**32 - 1:
+            raise ValueError("recording finalization timeout is outside the supported range")
+        transfer_timeout_seconds = max(1, min(2**32 - 1, round(timeout)))
+        request = pb.CommandFinalize(
             protocol_version=PROTOCOL_VERSION,
             request_id=request_id,
             session_id=self.session_id,
-            checkpoint_id=checkpoint_id,
-            episode_id=episode_id,
-            seed=seed,
+            active_episode_id=self.current_episode_id if self._episode_active else 0,
+            reason="trainer command interrupted" if interrupted else "trainer command complete",
+            interrupted=interrupted,
+            transfer_timeout_seconds=transfer_timeout_seconds,
         )
-        envelope = pb.WireMessage(protocol_version=PROTOCOL_VERSION, capture_request=request)
-        self._transport.send(envelope)
-        while True:
-            message = self._receive()
-            case = message.WhichOneof("payload")
-            if case == "capture_ready":
-                ready = message.capture_ready
-                self._require_version(ready.protocol_version, "capture readiness")
-                if (
-                    ready.request_id != request_id
-                    or ready.session_id != self.session_id
-                    or ready.checkpoint_id != checkpoint_id
-                ):
-                    raise ProtocolStateError("capture readiness does not match its request")
-                self.client_tick = max(self.client_tick, int(ready.client_tick))
-                self._capture_request = pb.CaptureRequest(
-                    protocol_version=PROTOCOL_VERSION,
-                    request_id=request_id,
-                    session_id=self.session_id,
-                    checkpoint_id=checkpoint_id,
-                    episode_id=episode_id,
-                    seed=seed,
+        self._transport.send(
+            pb.WireMessage(protocol_version=PROTOCOL_VERSION, command_finalize=request)
+        )
+        self._finalized = True
+        prior_timeout = self._set_transport_timeout(timeout)
+        last_ordinal = -1
+        offered_count = 0
+        positive_acknowledgements = 0
+        try:
+            while True:
+                message = self._receive()
+                case = message.WhichOneof("payload")
+                if case == "episode_artifact":
+                    artifact = self._artifact_from_proto(
+                        message.episode_artifact, request_id, last_ordinal
+                    )
+                    try:
+                        retained, detail = artifact_handler(artifact)
+                    except Exception as exception:
+                        retained = False
+                        detail = str(exception) or exception.__class__.__name__
+                    if not retained and not detail:
+                        detail = "trainer retention failed without a diagnostic"
+                    acknowledgement = pb.RetentionAcknowledgement(
+                        protocol_version=PROTOCOL_VERSION,
+                        request_id=request_id,
+                        session_id=self.session_id,
+                        ordinal=artifact.ordinal,
+                        episode_id=artifact.episode_id,
+                        sha256=artifact.sha256,
+                        retained=retained,
+                        detail=detail,
+                    )
+                    self._transport.send(
+                        pb.WireMessage(
+                            protocol_version=PROTOCOL_VERSION,
+                            retention_acknowledgement=acknowledgement,
+                        )
+                    )
+                    positive_acknowledgements += int(retained)
+                    last_ordinal = artifact.ordinal
+                    offered_count += 1
+                    continue
+                if case == "batch_complete":
+                    batch = self._batch_from_proto(message.batch_complete, request_id)
+                    if batch.offered_artifacts != offered_count:
+                        raise ProtocolStateError(
+                            "recording batch offered count does not match streamed artifacts"
+                        )
+                    if batch.retained_artifacts != positive_acknowledgements:
+                        raise ProtocolStateError(
+                            "recording batch retained count does not match acknowledgements"
+                        )
+                    if batch.expected_artifacts != self._episode_count:
+                        raise ProtocolStateError(
+                            "recording batch expected count does not match command resets"
+                        )
+                    return batch
+                if case in {
+                    "connection_hello",
+                    "connection_ready",
+                    "episode_ready",
+                    "action_applied",
+                    "observation",
+                }:
+                    self._validate_drained_data_plane_message(message, case)
+                    continue
+                raise ProtocolStateError(
+                    f"unexpected {case or 'empty'} message while finalizing recordings"
                 )
-                return
-            if case in {"connection_hello", "connection_ready"}:
-                self._handshake(message)
-                continue
+        finally:
+            self._set_transport_timeout(prior_timeout)
+
+    def _set_transport_timeout(self, timeout: float | None) -> float | None:
+        setter = getattr(self._transport, "set_timeout", None)
+        if setter is None:
+            return None
+        previous: float | None = setter(timeout)
+        return previous
+
+    def _validate_drained_data_plane_message(self, message: Any, case: str) -> None:
+        """Validate and discard data sent before Fabric handled CommandFinalize."""
+
+        payload = getattr(message, case)
+        self._require_version(payload.protocol_version, f"drained {case.replace('_', ' ')}")
+        if payload.session_id != self.session_id:
             raise ProtocolStateError(
-                f"unexpected {case or 'empty'} message while preparing capture"
+                f"drained {case.replace('_', ' ')} does not belong to the command session"
+            )
+        episode_id = getattr(payload, "episode_id", 0)
+        if episode_id and episode_id != self.current_episode_id:
+            raise ProtocolStateError(
+                f"drained {case.replace('_', ' ')} does not belong to the active episode"
             )
 
-    def finish_capture(
-        self,
-        shutdown_request_id: int,
-        checkpoint_id: str,
-        episode_id: int,
-        reconnect_minecraft: bool,
-    ) -> CaptureArtifact:
-        request = self._capture_request
-        if request is None:
-            raise ProtocolStateError("no replay capture is active")
-        if request.checkpoint_id != checkpoint_id or request.episode_id != episode_id:
-            raise ProtocolStateError("capture completion does not match the active capture")
-        self._transport.send(
-            pb.WireMessage(
-                protocol_version=PROTOCOL_VERSION,
-                shutdown=pb.Shutdown(
-                    protocol_version=PROTOCOL_VERSION,
-                    request_id=shutdown_request_id,
-                    session_id=self.session_id,
-                    episode_id=episode_id,
-                    reason=f"showcase capture complete for {checkpoint_id}",
-                    disconnect_minecraft=True,
-                    reconnect_minecraft=reconnect_minecraft,
-                ),
-            )
+    def _artifact_from_proto(
+        self, artifact: Any, request_id: int, after_ordinal: int
+    ) -> RecordingArtifact:
+        self._require_version(artifact.protocol_version, "episode artifact")
+        status = int(artifact.recording_status)
+        reason = int(artifact.terminal_reason)
+        complete_reasons = {
+            pb.TERMINAL_REASON_SUCCESS,
+            pb.TERMINAL_REASON_MISSED_JUMP,
+            pb.TERMINAL_REASON_TIME_LIMIT,
+        }
+        valid_status = (
+            status == pb.EPISODE_RECORDING_STATUS_COMPLETE and reason in complete_reasons
+        ) or (
+            status == pb.EPISODE_RECORDING_STATUS_PARTIAL
+            and reason == pb.TERMINAL_REASON_INFRASTRUCTURE_ERROR
         )
-        while True:
-            message = self._receive()
-            case = message.WhichOneof("payload")
-            if case == "capture_complete":
-                completed = message.capture_complete
-                self._require_version(completed.protocol_version, "capture completion")
-                if (
-                    completed.request_id != request.request_id
-                    or completed.session_id != self.session_id
-                    or completed.checkpoint_id != checkpoint_id
-                    or completed.episode_id != episode_id
-                    or not completed.replay_file
-                    or len(completed.sha256) != 32
-                    or completed.size_bytes <= 0
-                ):
-                    raise ProtocolStateError("capture completion does not match its request")
-                artifact = CaptureArtifact(
-                    request_id=int(completed.request_id),
-                    session_id=str(completed.session_id),
-                    checkpoint_id=str(completed.checkpoint_id),
-                    episode_id=int(completed.episode_id),
-                    replay_file=Path(completed.replay_file),
-                    sha256=bytes(completed.sha256),
-                    size_bytes=int(completed.size_bytes),
-                )
-                self._capture_request = None
-                if reconnect_minecraft:
-                    self._handshake()
-                return artifact
-            raise ProtocolStateError(
-                f"unexpected {case or 'empty'} message while finalizing capture"
-            )
+        if (
+            artifact.request_id != request_id
+            or artifact.session_id != self.session_id
+            or artifact.ordinal <= after_ordinal
+            or artifact.ordinal >= self._episode_count
+            or artifact.episode_id <= 0
+            or not valid_status
+            or not artifact.staging_path
+            or artifact.size_bytes <= 0
+            or len(artifact.sha256) != 32
+        ):
+            raise ProtocolStateError("episode artifact violates recording batch invariants")
+        return RecordingArtifact(
+            request_id=int(artifact.request_id),
+            session_id=str(artifact.session_id),
+            ordinal=int(artifact.ordinal),
+            episode_id=int(artifact.episode_id),
+            seed=int(artifact.seed),
+            recording_status=status,
+            terminal_reason=reason,
+            staging_path=Path(artifact.staging_path),
+            sha256=bytes(artifact.sha256),
+            size_bytes=int(artifact.size_bytes),
+        )
+
+    def _batch_from_proto(self, completed: Any, request_id: int) -> RecordingBatch:
+        self._require_version(completed.protocol_version, "recording batch completion")
+        if (
+            completed.request_id != request_id
+            or completed.session_id != self.session_id
+            or completed.offered_artifacts > completed.expected_artifacts
+            or completed.retained_artifacts > completed.offered_artifacts
+            or not completed.reconnecting_minecraft
+        ):
+            raise ProtocolStateError("recording batch completion violates invariants")
+        return RecordingBatch(
+            request_id=int(completed.request_id),
+            session_id=str(completed.session_id),
+            expected_artifacts=int(completed.expected_artifacts),
+            offered_artifacts=int(completed.offered_artifacts),
+            retained_artifacts=int(completed.retained_artifacts),
+            preserved_artifacts=int(completed.preserved_artifacts),
+            warnings=tuple(str(warning) for warning in completed.warnings),
+            reconnecting_minecraft=bool(completed.reconnecting_minecraft),
+        )
 
     def _receive(self) -> Any:
         message = self._transport.receive()
@@ -394,8 +482,6 @@ class BenchmarkConnection:
                         session_id=self.session_id,
                         episode_id=self.current_episode_id,
                         reason=reason,
-                        disconnect_minecraft=False,
-                        reconnect_minecraft=False,
                     ),
                 )
             )
@@ -460,7 +546,9 @@ class BenchmarkConnection:
     @staticmethod
     def _require_version(version: int, description: str) -> None:
         if version != PROTOCOL_VERSION:
-            raise ProtocolStateError(f"{description} uses protocol version {version}, expected 1")
+            raise ProtocolStateError(
+                f"{description} uses protocol version {version}, expected {PROTOCOL_VERSION}"
+            )
 
 
 ConnectionFactory = Callable[[], BenchmarkConnection]

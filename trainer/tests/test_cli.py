@@ -14,6 +14,12 @@ def test_only_failed_final_acceptance_requests_a_nonzero_exit() -> None:
     assert cli._final_acceptance_failed({"acceptance": {"passed": False}})
 
 
+def test_capture_command_is_removed() -> None:
+    parser = cli._parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["capture"])
+
+
 def test_keyboard_interrupt_exits_without_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

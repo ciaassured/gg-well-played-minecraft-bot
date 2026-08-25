@@ -32,6 +32,7 @@ val generateProto by tasks.registering(Exec::class) {
     outputs.dir(generatedProtocol)
     doFirst {
         val protocolRoot = file(protocolDir.get()).absoluteFile
+        delete(generatedProtocol)
         generatedProtocol.get().asFile.mkdirs()
         commandLine(
             "protoc",

@@ -46,8 +46,10 @@
         '';
 
       startup-configuration = pkgs.runCommand "jump-client-startup-configuration" {} ''
-        grep -q 'CLIENT_MODE_TRAINING' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
-        grep -q 'CLIENT_MODE_RECORDING' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
+        if grep -q 'CLIENT_MODE_' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}; then
+          echo "unified client still refers to a mode" >&2
+          exit 1
+        fi
         grep -q 'keySprint.setDown(false)' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'clientTick - lastHelloAttemptTick >= 20' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'hmc.offline=true' ${./apps.nix}
@@ -59,7 +61,17 @@
         grep -q 'renameDialog.*false' ${./apps.nix}
         grep -q 'jump.client.replayDir' ${./apps.nix}
         grep -q 'ReplayModStatus.runAfterStartup' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
-        grep -q 'CaptureComplete.newBuilder()' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
+        grep -q 'EpisodeArtifact.newBuilder()' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
+        grep -q 'BatchComplete.newBuilder()' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
+        grep -q 'deadlineReached(deadlineNanos)' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
+        grep -q 'connectMinecraft(client);' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
+        grep -q 'START_CUT_MARKER' ${../src/main/java/gg/wellplayed/jump/client/core/EpisodeRecordingCoordinator.java}
+        grep -q 'runtime/client' ${./apps.nix}
+        grep -q 'replaymod.jar' ${./apps.nix}
+        if grep -q -- '--mode' ${./apps.nix}; then
+          echo "unified launcher still accepts --mode" >&2
+          exit 1
+        fi
         grep -q 'Narrator.EMPTY' ${../src/main/java/gg/wellplayed/jump/client/mixin/GameNarratorMixin.java}
         grep -q 'SoundEngine;reload()V' ${../src/main/java/gg/wellplayed/jump/client/mixin/SoundManagerMixin.java}
         touch "$out"

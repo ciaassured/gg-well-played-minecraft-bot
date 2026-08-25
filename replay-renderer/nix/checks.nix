@@ -42,7 +42,9 @@
 
       startup-configuration = pkgs.runCommand "jump-replay-renderer-startup-configuration" {} ''
         grep -q 'runPostStartup' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
-        grep -q 'REPLAY_WARMUP_TICKS' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
+        grep -q 'replaySceneReady' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
+        grep -q 'SHORT_REPLAY_SETTLE_MILLIS' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
+        grep -q 'trim=start_frame=' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
         grep -q 'setDefaultInterpolatorType(InterpolatorType.LINEAR)' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
         grep -q 'CameraType.FIRST_PERSON' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}
         grep -q 'target.getId()' ${../src/main/java/gg/wellplayed/jump/renderer/ReplayRendererMod.java}

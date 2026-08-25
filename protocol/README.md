@@ -7,11 +7,19 @@ own build.
 
 `jump/v1/jump.proto` defines connection setup, idempotent resets, authoritative
 episode state/results, sequenced observations and actions, errors, shutdown, and
-Replay Mod capture coordination. TCP messages use a four-byte unsigned
+Replay Mod command-finalization and artifact-retention coordination. TCP
+messages use a four-byte unsigned
 big-endian length followed by one `WireMessage`; peers reject frames larger than
 1 MiB. Minecraft custom payloads contain the Protobuf bytes directly because
-Minecraft supplies packet framing. A recording shutdown explicitly says whether
-the client reconnects after Replay Mod has finalized and acknowledged the file.
+Minecraft supplies packet framing.
+
+Protocol v2 has one client lifecycle: connection messages contain no mode and
+the old capture messages are reserved. At trainer command end,
+`CommandFinalize` starts post-processing, `EpisodeArtifact` offers recordings
+sequentially, `RetentionAcknowledgement` confirms whether each staging source
+may be deleted, and `BatchComplete` reports warnings and reconnection. Each
+artifact identifies its episode, seed, ordinal, completeness, terminal reason,
+path, size, and SHA-256 digest.
 
 Commands:
 

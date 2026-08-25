@@ -35,6 +35,7 @@ def main() -> None:
     source = SCHEMA.read_text(encoding="utf-8")
     assert 'package jump.v1;' in source
     assert "payloads larger than 1 MiB" in source
+    assert "protocol v2" in source.lower()
 
     require_fields(
         source,
@@ -79,13 +80,49 @@ def main() -> None:
     require_fields(
         source,
         "Shutdown",
+        {"protocol_version", "request_id", "session_id", "episode_id", "reason"},
+    )
+    require_fields(
+        source,
+        "CommandFinalize",
         {
             "protocol_version",
             "request_id",
             "session_id",
+            "active_episode_id",
+            "interrupted",
+            "transfer_timeout_seconds",
+        },
+    )
+    require_fields(
+        source,
+        "EpisodeArtifact",
+        {
+            "protocol_version",
+            "request_id",
+            "session_id",
+            "ordinal",
             "episode_id",
-            "disconnect_minecraft",
-            "reconnect_minecraft",
+            "seed",
+            "recording_status",
+            "terminal_reason",
+            "staging_path",
+            "size_bytes",
+            "sha256",
+        },
+    )
+    require_fields(
+        source,
+        "RetentionAcknowledgement",
+        {
+            "protocol_version",
+            "request_id",
+            "session_id",
+            "ordinal",
+            "episode_id",
+            "sha256",
+            "retained",
+            "detail",
         },
     )
 
@@ -103,10 +140,21 @@ def main() -> None:
         "observation",
         "error",
         "shutdown",
-        "capture_request",
-        "capture_complete",
+        "command_finalize",
+        "episode_artifact",
+        "retention_acknowledgement",
+        "batch_complete",
     }:
         assert re.search(rf"\b{payload}\s*=", wire), f"WireMessage lacks {payload}"
+
+    assert "ClientMode" not in source
+    assert "CaptureRequest" not in source
+    assert "CaptureReady" not in source
+    assert "CaptureComplete" not in source
+    assert re.search(r'reserved\s+21\s+to\s+23\s*;', wire)
+    assert 'reserved "capture_request", "capture_ready", "capture_complete";' in wire
+    assert "mode" not in fields(message_body(source, "ConnectionHello"))
+    assert "mode" not in fields(message_body(source, "ConnectionReady"))
 
 
 if __name__ == "__main__":

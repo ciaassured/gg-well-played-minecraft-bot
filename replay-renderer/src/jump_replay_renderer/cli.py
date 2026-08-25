@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Validate Replay Mod captures and render each to a playable MP4.",
     )
     parser.add_argument(
-        "source", type=Path, help="an .mcpr file, replay directory, or run directory"
+        "source", type=Path, help="one .mcpr file or the exact directory to search recursively"
     )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--width", type=int, default=640)

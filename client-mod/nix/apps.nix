@@ -23,34 +23,7 @@
       name = "jump-benchmark-headless";
       runtimeInputs = [pkgs.coreutils pkgs.jdk25_headless];
       text = ''
-        mode="training"
-        passthrough=()
-        while (($#)); do
-          case "$1" in
-            --mode)
-              if (($# < 2)); then
-                echo "--mode requires training or recording" >&2
-                exit 2
-              fi
-              mode="$2"
-              shift 2
-              ;;
-            --mode=*)
-              mode="''${1#--mode=}"
-              shift
-              ;;
-            *)
-              passthrough+=("$1")
-              shift
-              ;;
-          esac
-        done
-        if [[ "$mode" != training && "$mode" != recording ]]; then
-          echo "--mode must be training or recording" >&2
-          exit 2
-        fi
-
-        runtime_dir="''${JUMP_CLIENT_RUNTIME:-$PWD/client-mod/runtime/$mode}"
+        runtime_dir="''${JUMP_CLIENT_RUNTIME:-$PWD/client-mod/runtime/client}"
         game_dir="$runtime_dir/game"
         mkdir -p \
           "$runtime_dir/HeadlessMC" \
@@ -62,12 +35,8 @@
         ln -sfn ${clientArtifacts.clientMod}/share/jump-benchmark-client/jump-benchmark-client.jar \
           "$game_dir/mods/jump-benchmark-client.jar"
         ln -sfn ${clientArtifacts.fabricApi} "$game_dir/mods/fabric-api.jar"
-        if [[ "$mode" == recording ]]; then
-          ln -sfn ${clientArtifacts.replayMod} "$game_dir/mods/replaymod.jar"
-          cp -f ${replayConfig} "$game_dir/config/replaymod.json"
-        else
-          rm -f "$game_dir/mods/replaymod.jar"
-        fi
+        ln -sfn ${clientArtifacts.replayMod} "$game_dir/mods/replaymod.jar"
+        cp -f ${replayConfig} "$game_dir/config/replaymod.json"
 
         chmod -R u+w "$runtime_dir"
         java_path="$(command -v java)"
@@ -98,11 +67,9 @@
         export SDL_AUDIODRIVER=dummy
         export OPENAL_SOFT_LOGLEVEL=0
         cd "$runtime_dir"
-        game_args=("''${passthrough[@]}")
-        if [[ "$mode" == training ]]; then
-          game_args=(--quickPlayMultiplayer 127.0.0.1:25565 "''${game_args[@]}")
-        fi
-        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Djump.client.mode=$mode -Djump.client.port=64123 -Djump.client.server=127.0.0.1:25565 -Djump.client.replayDir=$game_dir/replay_recordings -Xms512m -Xmx2g\" --game-args \"''${game_args[*]}\""
+        game_args=("$@")
+        finalization_timeout="''${JUMP_CLIENT_FINALIZATION_TIMEOUT_MILLIS:-300000}"
+        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Djump.client.port=64123 -Djump.client.server=127.0.0.1:25565 -Djump.client.replayDir=$game_dir/replay_recordings -Djump.client.finalizationTimeoutMillis=$finalization_timeout -Xms512m -Xmx2g\" --game-args \"''${game_args[*]}\""
         printf '%s\n' "$command_line" | java --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
       '';
     };
@@ -110,12 +77,12 @@
     apps.headless = {
       type = "app";
       program = "${launcher}/bin/jump-benchmark-headless";
-      meta.description = "Start the isolated Fabric client in training or recording mode";
+      meta.description = "Start the persistent Replay Mod Fabric benchmark client";
     };
     apps.default = {
       type = "app";
       program = "${launcher}/bin/jump-benchmark-headless";
-      meta.description = "Start the isolated Fabric client in training mode";
+      meta.description = "Start the persistent Replay Mod Fabric benchmark client";
     };
   };
 }
