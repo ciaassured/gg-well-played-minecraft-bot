@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Protocol
 
 import gymnasium as gym
@@ -104,6 +106,18 @@ class MinecraftJumpEnv(gym.Env[NDArray[np.float32], int]):
     def set_recording_context(self, **context: Any) -> None:
         if self._episode_recorder is not None:
             self._episode_recorder.set_episode_context(**context)
+
+    @contextmanager
+    def _preserve_seed_stream(self) -> Iterator[None]:
+        """Restore Gymnasium's current PRNG and seed after seeded resets."""
+
+        np_random = self._np_random
+        np_random_seed = self._np_random_seed
+        try:
+            yield
+        finally:
+            self._np_random = np_random
+            self._np_random_seed = np_random_seed
 
     def reset(
         self,

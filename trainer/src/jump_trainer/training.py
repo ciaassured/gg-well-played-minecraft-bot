@@ -176,13 +176,14 @@ def _validate_candidate(
         checkpoint=str(run.candidate_checkpoint(step)),
         training_step=step,
     )
-    report = evaluate_policy(
-        env,
-        model_policy(model),
-        VALIDATION_SEEDS,
-        policy_id=f"dqn-step-{step:08d}",
-        suite="validation",
-    )
+    with env._preserve_seed_stream():
+        report = evaluate_policy(
+            env,
+            model_policy(model),
+            VALIDATION_SEEDS,
+            policy_id=f"dqn-step-{step:08d}",
+            suite="validation",
+        )
     run.write_json(f"metrics/validation-step-{step:08d}.json", report.as_dict())
     _log(
         f"validation/dqn-step-{step:08d}",

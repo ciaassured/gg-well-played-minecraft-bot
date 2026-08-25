@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
+import jump_trainer.training as training
 from jump_trainer.env import JUMP, NOOP, MinecraftJumpEnv
 from jump_trainer.evaluation import (
     Policy,
@@ -9,8 +11,8 @@ from jump_trainer.evaluation import (
     promotion_key,
     scripted_one_jump_policy,
 )
-from jump_trainer.run_directory import atomic_write_json
-from jump_trainer.training import _promotion_metrics
+from jump_trainer.run_directory import RunDirectory, atomic_write_json
+from jump_trainer.training import _promotion_metrics, _validate_candidate
 from tests.fakes import SimulatedConnection
 
 
@@ -19,6 +21,21 @@ def _fixed_action_policy(action: int) -> Policy:
         return action
 
     return choose
+
+
+class _FixedActionModel:
+    def predict(self, _observation: np.ndarray, *, deterministic: bool) -> tuple[np.ndarray, None]:
+        assert deterministic is True
+        return np.asarray(JUMP), None
+
+
+def _implicit_seed(env: MinecraftJumpEnv) -> int:
+    _observation, info = env.reset()
+    return int(info["episode_seed"])
+
+
+def _validation_run(tmp_path) -> RunDirectory:
+    return RunDirectory.create(tmp_path / "runs", {"trainer": {}})
 
 
 def test_fixed_action_metrics_and_promotion_order(tmp_path) -> None:
@@ -70,4 +87,71 @@ def test_evaluation_reports_visible_progress(capsys) -> None:
     assert "client_ticks/action=1.00, server_ticks/action=1.00" in output
     assert "[evaluate] validation/candidate: 12/12 episodes; successes=12, mean_return=" in output
     assert report.success_count == 12
+    env.close()
+
+
+def test_validation_preserves_the_training_seed_stream(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(training, "VALIDATION_SEEDS", (100_000, 100_001))
+    control = MinecraftJumpEnv(
+        connection_factory=SimulatedConnection,
+        identifier_base=70_000,
+    )
+    validated = MinecraftJumpEnv(
+        connection_factory=SimulatedConnection,
+        identifier_base=80_000,
+    )
+    control.reset(seed=1_234)
+    validated.reset(seed=1_234)
+
+    expected_seed = _implicit_seed(control)
+    _validate_candidate(_validation_run(tmp_path), validated, _FixedActionModel(), 10)
+
+    assert _implicit_seed(validated) == expected_seed
+    control.close()
+    validated.close()
+
+
+def test_repeated_validation_does_not_restart_training_seeds(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(training, "VALIDATION_SEEDS", (100_000, 100_001))
+    control = MinecraftJumpEnv(
+        connection_factory=SimulatedConnection,
+        identifier_base=90_000,
+    )
+    validated = MinecraftJumpEnv(
+        connection_factory=SimulatedConnection,
+        identifier_base=100_000,
+    )
+    control.reset(seed=5_678)
+    validated.reset(seed=5_678)
+    expected_seeds = (_implicit_seed(control), _implicit_seed(control))
+    run = _validation_run(tmp_path)
+
+    _validate_candidate(run, validated, _FixedActionModel(), 10)
+    actual_seeds = [_implicit_seed(validated)]
+    _validate_candidate(run, validated, _FixedActionModel(), 20)
+    actual_seeds.append(_implicit_seed(validated))
+
+    assert tuple(actual_seeds) == expected_seeds
+    control.close()
+    validated.close()
+
+
+def test_validation_exception_restores_rng_state(tmp_path, monkeypatch) -> None:
+    connection = SimulatedConnection()
+    env = MinecraftJumpEnv(connection_factory=lambda: connection, identifier_base=110_000)
+    env.reset(seed=9_876)
+    original_random = env.np_random
+    original_seed = env.np_random_seed
+
+    def fail_evaluation(*args, **kwargs):
+        del args, kwargs
+        env.reset(seed=100_099)
+        raise RuntimeError("scripted evaluation failure")
+
+    monkeypatch.setattr(training, "evaluate_policy", fail_evaluation)
+    with pytest.raises(RuntimeError, match="scripted evaluation failure"):
+        _validate_candidate(_validation_run(tmp_path), env, _FixedActionModel(), 10)
+
+    assert env.np_random is original_random
+    assert env.np_random_seed == original_seed
     env.close()

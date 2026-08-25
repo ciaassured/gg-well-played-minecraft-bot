@@ -40,10 +40,12 @@ Both records include
 the policy is receiving one decision opportunity per game tick. Checkpoint and
 promotion decisions use the same format. Validation ranks candidates using the
 existing success, completion-time, and jump-request ordering and may promote a
-candidate to `checkpoints/best.zip`. The public `evaluate` command only measures
-a frozen checkpoint and never participates in promotion. Low CPU utilization
-is normal because each action is synchronized to a real 20 TPS Minecraft
-client; the small DQN update is not the throughput bottleneck.
+candidate to `checkpoints/best.zip`. It always reuses the fixed
+`100000..100099` suite without mutating the seed stream used by seedless
+training resets. The public `evaluate` command only measures a frozen checkpoint
+and never participates in promotion. Low CPU utilization is normal because each
+action is synchronized to a real 20 TPS Minecraft client; the small DQN update
+is not the throughput bottleneck.
 Pressing Ctrl-C during learning saves the current in-memory model as
 `checkpoints/latest.zip`, writes `metrics/training-interrupted.json`, and exits
 without a traceback. A later `train` command always starts a new run; use
