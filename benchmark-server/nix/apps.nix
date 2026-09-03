@@ -46,9 +46,11 @@
           echo "JUMP_CLIENT_COUNT must be a positive integer" >&2
           exit 2
         fi
-        mkdir -p "$runtime_dir/plugins"
+        mkdir -p "$runtime_dir/cache" "$runtime_dir/plugins"
         ln -sfn ${serverArtifacts.serverPackage}/share/jump-benchmark-server/paper-26.2-112.jar \
           "$runtime_dir/paper.jar"
+        ln -sfn ${serverArtifacts.serverPackage}/share/jump-benchmark-server/mojang-26.2.jar \
+          "$runtime_dir/cache/mojang_26.2.jar"
         ln -sfn ${serverArtifacts.serverPackage}/share/jump-benchmark-server/jump-benchmark-paper.jar \
           "$runtime_dir/plugins/jump-benchmark-paper.jar"
         if [[ ! -e "$runtime_dir/eula.txt" ]]; then

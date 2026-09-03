@@ -24,4 +24,5 @@ Mutable state defaults to `benchmark-server/runtime`; set
 Paper's `max-players` value at startup. `JUMP_SERVER_XMS` and
 `JUMP_SERVER_XMX` configure the JVM heap, with local defaults of `512m` and
 `1g`. Server simulation and view distances are both two chunks, which covers
-the fixed 24-block arena.
+the fixed 24-block arena. The Paper and matching Mojang server JARs are pinned
+in the Nix package, so server startup does not require network egress.

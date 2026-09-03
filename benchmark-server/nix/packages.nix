@@ -8,6 +8,10 @@
       url = "https://fill-data.papermc.io/v1/objects/bd3a58cf96874e5ea6643f5f6fe9b4f5bf9e34b795fa078c2f0ee8b98b2f907e/paper-26.2-112.jar";
       hash = "sha256-vTpYz5aHTl6mZD9fb+m09b+eNLeV+geMLw7ouYsvkH4=";
     };
+    mojangServer = pkgs.fetchurl {
+      url = "https://piston-data.mojang.com/v1/objects/823e2250d24b3ddac457a60c92a6a941943fcd6a/server.jar";
+      hash = "sha256-zazfsliY3l5LSw5d3MJyL3cGfkZgVwnC2IbAAOu2PsU=";
+    };
     protobufJava = pkgs.fetchurl {
       url = "https://repo.maven.apache.org/maven2/com/google/protobuf/protobuf-java/4.35.1/protobuf-java-4.35.1.jar";
       hash = "sha256-pDRboqoAmRL/b5BGf+otEEYFJWtyxQhA118TJWY4pHI=";
@@ -40,6 +44,7 @@
     serverPackage = pkgs.runCommand "jump-benchmark-server-1.0.0" {} ''
       mkdir -p "$out/share/jump-benchmark-server"
       cp ${paperServer} "$out/share/jump-benchmark-server/paper-26.2-112.jar"
+      cp ${mojangServer} "$out/share/jump-benchmark-server/mojang-26.2.jar"
       cp ${plugin}/share/jump-benchmark-server/jump-benchmark-paper.jar \
         "$out/share/jump-benchmark-server/"
     '';
@@ -85,9 +90,11 @@
             "''${JUMP_SERVER_XMS:-512m}" "''${JUMP_SERVER_XMX:-1g}" "$runtime_dir"
           exit 0
         fi
-        mkdir -p "$runtime_dir/plugins"
+        mkdir -p "$runtime_dir/cache" "$runtime_dir/plugins"
         ln -sfn ${serverPackage}/share/jump-benchmark-server/paper-26.2-112.jar \
           "$runtime_dir/paper.jar"
+        ln -sfn ${serverPackage}/share/jump-benchmark-server/mojang-26.2.jar \
+          "$runtime_dir/cache/mojang_26.2.jar"
         ln -sfn ${serverPackage}/share/jump-benchmark-server/jump-benchmark-paper.jar \
           "$runtime_dir/plugins/jump-benchmark-paper.jar"
         printf 'eula=true\n' > "$runtime_dir/eula.txt"

@@ -46,6 +46,15 @@
         touch "$out"
       '';
 
+      packaged-mojang-runtime = pkgs.runCommand "jump-server-packaged-mojang-runtime" {} ''
+        echo \
+          "cdacdfb25898de5e4b4b0e5ddcc2722f77067e46605709c2d886c000ebb63ec5  ${serverArtifacts.serverPackage}/share/jump-benchmark-server/mojang-26.2.jar" \
+          | sha256sum --check --status
+        grep -q 'cache/mojang_26.2.jar' ${./apps.nix}
+        grep -q 'cache/mojang_26.2.jar' ${./packages.nix}
+        touch "$out"
+      '';
+
       protobuf-isolation =
         pkgs.runCommand "jump-server-protobuf-isolation" {
           nativeBuildInputs = [pkgs.jdk25_headless];
