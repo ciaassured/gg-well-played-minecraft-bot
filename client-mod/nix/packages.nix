@@ -68,7 +68,6 @@
         ln -sfn ${clientMod}/share/jump-benchmark-client/jump-benchmark-client.jar \
           "$game_dir/mods/jump-benchmark-client.jar"
         ln -sfn ${fabricApi} "$game_dir/mods/fabric-api.jar"
-        chmod -R u+w "$runtime_dir"
         java_path="$(command -v java)"
         {
           echo "hmc.mcdir=$runtime_dir/minecraft"

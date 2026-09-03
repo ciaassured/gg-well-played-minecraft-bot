@@ -87,6 +87,10 @@
           echo "unified launcher still accepts --mode" >&2
           exit 1
         fi
+        if grep -q 'chmod -R u+w.*runtime_dir' ${./apps.nix} ${./packages.nix}; then
+          echo "client startup attempts to change ownership-managed runtime permissions" >&2
+          exit 1
+        fi
         grep -q 'Narrator.EMPTY' ${../src/main/java/gg/wellplayed/jump/client/mixin/GameNarratorMixin.java}
         grep -q 'UserApiService.OFFLINE' ${../src/main/java/gg/wellplayed/jump/client/mixin/OfflineProfileKeyPairMixin.java}
         grep -q 'SoundEngine;reload()V' ${../src/main/java/gg/wellplayed/jump/client/mixin/SoundManagerMixin.java}
