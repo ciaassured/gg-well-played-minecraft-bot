@@ -121,6 +121,8 @@ Formatting is also project-local:
 ```
 
 The server, client, and trainer flakes expose independent `#oci` archives.
-GitHub Actions publishes all three public amd64 GHCR images with the same full
-Git commit tag after every flake check succeeds. GitOps manifests pin immutable
-digests and upgrade the intentionally incompatible protocol-v3 images together.
+After every successful flake-check workflow, the separate image workflow
+publishes all three amd64 GHCR images with the same full Git commit tag. Each
+GHCR package must be made public once in its package settings; that visibility
+then applies to later versions. GitOps manifests pin immutable digests and
+upgrade the intentionally incompatible protocol-v3 images together.

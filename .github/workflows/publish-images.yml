@@ -55,24 +55,3 @@ jobs:
               "docker-archive:result-$component" \
               "docker://ghcr.io/ciaassured/${images[$component]}:$IMAGE_REVISION"
           done
-
-      - name: Keep coordinated images public
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for image in \
-            gg-well-played-minecraft-bot-server \
-            gg-well-played-minecraft-bot-client \
-            gg-well-played-minecraft-bot-trainer; do
-            for attempt in {1..12}; do
-              if gh api --method PATCH \
-                "/orgs/ciaassured/packages/container/$image" \
-                --field visibility=public; then
-                break
-              fi
-              if [[ "$attempt" == 12 ]]; then
-                exit 1
-              fi
-              sleep 5
-            done
-          done
