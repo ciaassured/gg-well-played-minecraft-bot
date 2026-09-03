@@ -55,7 +55,7 @@
           echo "maxFps:60"
           echo "inactivityFpsLimit:minimized"
           echo "renderDistance:2"
-          echo "simulationDistance:2"
+          echo "simulationDistance:5"
           echo "soundCategory_master:0.0"
         } > "$game_dir/options.txt"
 

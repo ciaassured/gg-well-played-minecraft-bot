@@ -15,6 +15,21 @@
         touch "$out"
       '';
 
+      container-readiness-probe =
+        pkgs.runCommand "jump-client-readiness-probe" {
+          nativeBuildInputs = [pkgs.jq pkgs.gnutar];
+        } ''
+          mkdir image
+          tar -xf ${clientArtifacts.oci} -C image
+          config=$(jq -r '.[0].Config' image/manifest.json)
+          runtime_path=$(jq -r \
+            '.config.Env[] | select(startswith("PATH=")) | sub("^PATH="; "")' \
+            "image/$config")
+          touch ready
+          ${pkgs.coreutils}/bin/env PATH="$runtime_path" test -f ready
+          touch "$out"
+        '';
+
       core-tests =
         pkgs.runCommand "jump-client-core-tests" {
           nativeBuildInputs = [pkgs.jdk25_headless pkgs.protobuf];
@@ -67,6 +82,8 @@
         grep -q 'narrator:0' ${./apps.nix}
         grep -q 'maxFps:60' ${./apps.nix}
         grep -q 'inactivityFpsLimit:minimized' ${./apps.nix}
+        grep -q 'simulationDistance:5' ${./apps.nix}
+        grep -q 'simulationDistance:5' ${./packages.nix}
         grep -q 'getFramerateLimitTracker().onInputReceived()' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'emitObservationIfActionTickComplete(client)' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'jump.client.bind' ${./apps.nix}

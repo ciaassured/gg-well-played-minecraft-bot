@@ -27,6 +27,9 @@ Configuration is external:
 - `JUMP_CLIENT_READINESS_FILE` selects the readiness path.
 - `JUMP_CLIENT_XMS` and `JUMP_CLIENT_XMX` select the client JVM heap.
 
+Headless clients use a two-chunk render distance and a five-chunk simulation
+distance, the minimum simulation distance accepted by Minecraft 26.2.
+
 Readiness is published atomically only after the trainer listener is bound and
 Paper acknowledges protocol v3. It is removed on Paper loss. Kubernetes uses
 an exec file probe because connecting to port 64123 would consume its sole

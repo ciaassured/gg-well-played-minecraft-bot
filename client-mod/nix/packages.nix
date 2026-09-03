@@ -92,7 +92,7 @@
           echo "maxFps:60"
           echo "inactivityFpsLimit:minimized"
           echo "renderDistance:2"
-          echo "simulationDistance:2"
+          echo "simulationDistance:5"
           echo "soundCategory_master:0.0"
         } > "$game_dir/options.txt"
         export ALSOFT_DRIVERS=null SDL_AUDIODRIVER=dummy OPENAL_SOFT_LOGLEVEL=0
@@ -112,6 +112,7 @@
         Entrypoint = ["${containerEntrypoint}/bin/jump-client-container"];
         WorkingDir = "/runtime";
         Env = [
+          "PATH=${pkgs.lib.makeBinPath [pkgs.coreutils pkgs.jdk25_headless]}"
           "JUMP_CLIENT_RUNTIME=/runtime"
           "JUMP_CLIENT_READINESS_FILE=/runtime/ready"
           "JUMP_PAPER_ADDRESS=jump-paper:25565"
