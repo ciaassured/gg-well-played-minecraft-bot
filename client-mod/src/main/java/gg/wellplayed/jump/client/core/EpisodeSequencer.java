@@ -7,13 +7,16 @@ import gg.wellplayed.jump.protocol.v1.EpisodeResult;
 import gg.wellplayed.jump.protocol.v1.EpisodeState;
 import gg.wellplayed.jump.protocol.v1.ErrorCode;
 import gg.wellplayed.jump.protocol.v1.ResetRequest;
+import gg.wellplayed.jump.protocol.v1.TerminalReason;
 import java.util.Objects;
 
 /** Pure client-side reset, stability, action, and observation sequencer. */
 public final class EpisodeSequencer {
   private static final int PROTOCOL_VERSION = 3;
   public static final int STABLE_TICKS_REQUIRED = 2;
-  public static final int ACTION_DEADLINE_TICKS = 10;
+  // The trainer socket has its own five-second timeout. Keep this secondary tick-based guard
+  // comfortably above normal coordinator and reset-barrier jitter for large client pools.
+  public static final int ACTION_DEADLINE_TICKS = 200;
 
   public enum Phase {
     IDLE,
@@ -173,6 +176,14 @@ public final class EpisodeSequencer {
     requireVersion(state.getProtocolVersion());
     requireSession(state.getSessionId());
     requireEpisode(state.getEpisodeId());
+    if (phase == Phase.WAITING_ACTION
+        && state.getPhase() == EpisodePhase.EPISODE_PHASE_ABORTED
+        && state.getTerminalReason() == TerminalReason.TERMINAL_REASON_INFRASTRUCTURE_ERROR) {
+      serverState = null;
+      serverResult = null;
+      phase = Phase.ABORTED;
+      return;
+    }
     if (phase != Phase.ACTION_APPLIED) {
       if (phase == Phase.TERMINAL && state.getPhase() == EpisodePhase.EPISODE_PHASE_TERMINAL) {
         return;

@@ -202,8 +202,19 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
               message.getEpisodeReady().getEpisodeId());
         }
         case EPISODE_STATE -> {
+          EpisodeSequencer.Phase previousPhase = sequencer.phase();
           sequencer.receiveState(message.getEpisodeState());
-          emitObservationIfActionTickComplete(client);
+          if (previousPhase == EpisodeSequencer.Phase.WAITING_ACTION
+              && sequencer.phase() == EpisodeSequencer.Phase.ABORTED) {
+            releaseAll(client);
+            sendError(
+                client,
+                ErrorCode.ERROR_CODE_ACTION_TIMEOUT,
+                "benchmark action deadline elapsed",
+                true);
+          } else {
+            emitObservationIfActionTickComplete(client);
+          }
         }
         case EPISODE_RESULT -> {
           sequencer.receiveResult(message.getEpisodeResult());

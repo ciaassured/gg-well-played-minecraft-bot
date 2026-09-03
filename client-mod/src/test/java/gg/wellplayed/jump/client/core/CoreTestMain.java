@@ -30,6 +30,7 @@ public final class CoreTestMain {
     framingRoundTripsAndRejectsBadLengths();
     resetAndActionSequencingIsStrict();
     abortAcknowledgementsAreIdempotent();
+    serverActionDeadlineAbortIsAccepted();
     actionDeadlineAbortsInputs();
     observationsUseCollisionBoxFront();
     configurationAndIdentityAreStable();
@@ -122,8 +123,8 @@ public final class CoreTestMain {
     sequencer.receiveReady(ready(reset, 4.0));
     sequencer.observeClientStability(true, 10);
     sequencer.observeClientStability(true, 11);
-    check(!sequencer.actionTimedOut(21));
-    check(sequencer.actionTimedOut(22));
+    check(!sequencer.actionTimedOut(11 + EpisodeSequencer.ACTION_DEADLINE_TICKS));
+    check(sequencer.actionTimedOut(12 + EpisodeSequencer.ACTION_DEADLINE_TICKS));
 
     ControlledInputs inputs = new ControlledInputs();
     inputs.apply(Action.ACTION_JUMP);
@@ -159,6 +160,23 @@ public final class CoreTestMain {
             .build();
     sequencer.receiveState(aborted);
     sequencer.receiveResult(result);
+    equal(EpisodeSequencer.Phase.ABORTED, sequencer.phase());
+  }
+
+  private static void serverActionDeadlineAbortIsAccepted() throws Exception {
+    EpisodeSequencer sequencer = new EpisodeSequencer();
+    sequencer.startSession("session");
+    ResetRequest reset = reset(1, 1, 0);
+    sequencer.beginReset(reset);
+    sequencer.receiveReady(ready(reset, 4.0));
+    sequencer.observeClientStability(true, 10);
+    sequencer.observeClientStability(true, 11);
+
+    EpisodeState aborted =
+        state(reset, 220, 0, EpisodePhase.EPISODE_PHASE_ABORTED).toBuilder()
+            .setTerminalReason(TerminalReason.TERMINAL_REASON_INFRASTRUCTURE_ERROR)
+            .build();
+    sequencer.receiveState(aborted);
     equal(EpisodeSequencer.Phase.ABORTED, sequencer.phase());
   }
 
