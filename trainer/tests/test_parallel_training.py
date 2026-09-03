@@ -76,6 +76,7 @@ def test_parallel_pipeline_uses_spawned_learner_and_promotes_loadable_checkpoint
     assert summary["target_updates"] == 1
     assert summary["client_ordinals"] == [0, 1]
     assert len(summary["validation_boundaries"]) == 2
+    assert summary["pool"]["episode_abort_barriers"] == 1
     assert run.latest_checkpoint.is_file()
     assert run.best_checkpoint.is_file()
     assert DQN.load(run.best_checkpoint, device="cpu").num_timesteps in {0, 2}

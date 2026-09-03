@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from jump_trainer.endpoints import Endpoint
-from jump_trainer.env import JUMP, MinecraftJumpEnv
+from jump_trainer.env import JUMP, NOOP, MinecraftJumpEnv
 from jump_trainer.errors import InfrastructureError
 from jump_trainer.pool import ClientPool, TrainingSeedStreams
 from tests.fakes import SimulatedConnection
@@ -23,6 +23,18 @@ class AlwaysJump:
 
     def reset(self, actor_index: int) -> None:
         del actor_index
+
+
+class AlwaysNoop(AlwaysJump):
+    def actions(
+        self,
+        actor_indices: tuple[int, ...],
+        observations: np.ndarray,
+        *,
+        deterministic: bool,
+    ) -> np.ndarray:
+        del observations, deterministic
+        return np.full(len(actor_indices), NOOP, dtype=np.int64)
 
 
 def _pool(width: int) -> tuple[ClientPool, list[SimulatedConnection]]:
@@ -73,6 +85,31 @@ def test_collection_overshoot_is_bounded_by_pool_width() -> None:
     assert result.actual_transitions == 6
     assert result.actual_transitions - result.requested_transitions < pool.width
     assert batches == [(1, 3), (2, 3)]
+
+
+def test_abort_barrier_disconnects_all_actors_before_subset_evaluation() -> None:
+    pool, connections = _pool(3)
+    with pool:
+        pool.collect(
+            requested_total=3,
+            actual_total=0,
+            first_cycle=0,
+            seeds=TrainingSeedStreams(42, pool.endpoints),
+            policy=AlwaysNoop(),
+            transition_sink=lambda _transitions, _cycle: None,
+        )
+        pool.abort_active_episodes()
+        assert all(connection.closed for connection in connections)
+        report = pool.evaluate(
+            AlwaysJump(),
+            (100_000,),
+            policy_id="after-barrier",
+            suite="test",
+        )
+
+    assert report.success_count == 1
+    assert sum(len(connection.reset_seeds) for connection in connections) == 4
+    assert pool.stats()["episode_abort_barriers"] == 1
 
 
 def test_training_seed_streams_are_per_client_and_repeatable() -> None:

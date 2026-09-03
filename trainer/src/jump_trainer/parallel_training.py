@@ -133,6 +133,12 @@ def run_parallel(
         requested_boundary = 0
 
         while True:
+            if actual > 0:
+                # Collection can stop in the middle of an episode. Abort those episodes before
+                # checkpoint work or subset validation leaves actors idle past Paper's action
+                # deadline. Fabric keeps Minecraft connected and accepts a fresh trainer session
+                # on the next reset.
+                pool.abort_active_episodes()
             candidate = run.candidate_checkpoint(actual)
             barrier = learner.barrier(candidate, run.latest_checkpoint)
             validation = pool.evaluate(

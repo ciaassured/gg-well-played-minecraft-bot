@@ -239,6 +239,16 @@ class _Actor:
                         )
                     )
                     continue
+                if command.kind == "abort":
+                    # Closing the trainer transport makes Fabric release controls and abort the
+                    # active Paper episode while leaving Minecraft connected. The same
+                    # environment reconnects lazily on its next reset.
+                    env.close()
+                    current_seed = None
+                    current_observation = None
+                    self.latest_observation = None
+                    self.output.put(_Event(self.endpoint.index, "aborted"))
+                    continue
                 if command.kind != "action" or command.action is None:
                     raise AssertionError(f"invalid actor command: {command.kind}")
                 if current_observation is None:
@@ -305,6 +315,7 @@ class ClientPool:
         self._client_ticks: dict[int, list[int]] = defaultdict(list)
         self._server_ticks: dict[int, list[int]] = defaultdict(list)
         self._transition_counts: dict[int, int] = defaultdict(int)
+        self._episode_abort_barriers = 0
         self._started_at = monotonic()
         selected_factory = environment_factory
         if selected_factory is None:
@@ -401,6 +412,15 @@ class ClientPool:
             last_cycle=cycle,
             elapsed_seconds=monotonic() - segment_started,
         )
+
+    def abort_active_episodes(self) -> None:
+        """Abort every actor episode before a checkpoint or evaluation barrier."""
+
+        actor_indices = tuple(sorted(self._actors))
+        for actor_index in actor_indices:
+            self._actors[actor_index].submit(_Command("abort"))
+        self._await_kind("aborted", set(actor_indices))
+        self._episode_abort_barriers += 1
 
     def evaluate(
         self,
@@ -516,6 +536,7 @@ class ClientPool:
             "transitions": transitions,
             "elapsed_seconds": elapsed,
             "throughput_transitions_per_second": transitions / elapsed if elapsed > 0 else 0.0,
+            "episode_abort_barriers": self._episode_abort_barriers,
         }
 
     def close(self) -> None:
