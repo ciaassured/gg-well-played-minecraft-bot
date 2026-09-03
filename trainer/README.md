@@ -41,7 +41,9 @@ reference value. The seed and validation interval default to 20260823 and 5000,
 and `--validation-episodes` defaults to 20 with an accepted range of 1 through
 100. Each run selects that many seeds once from the start of the fixed
 `100000..100099` validation partition and reuses the same subset at step zero
-and every periodic validation. Both training and validation records include
+and every periodic validation. Chunk boundaries do not restart DQN exploration
+decay: its epsilon schedule spans the complete requested training budget.
+Both training and validation records include
 `client_ticks/action` and `server_ticks/action`; values near `1.00` confirm that
 the policy is receiving one decision opportunity per game tick. Checkpoint and
 promotion decisions use the same format. Validation compares each candidate to

@@ -13,7 +13,7 @@ import jump_trainer.training as training
 from jump_trainer.config import TrainConfig
 from jump_trainer.env import MinecraftJumpEnv
 from jump_trainer.evaluation import EpisodeMetrics, EvaluationReport
-from jump_trainer.training import TrainingProgressCallback
+from jump_trainer.training import FullTrainingBudgetCallback, TrainingProgressCallback
 from tests.fakes import SimulatedConnection
 
 
@@ -60,6 +60,42 @@ def test_deterministic_mock_training_saves_and_loads(tmp_path: Path, capsys) -> 
     assert "server_ticks/action=1.00" in output
     assert "exploration=" in output
     assert "eta=00:00" in output
+    env.close()
+
+
+def test_chunked_learning_uses_full_budget_for_exploration() -> None:
+    env = MinecraftJumpEnv(connection_factory=SimulatedConnection, identifier_base=60_000)
+    model = DQN(
+        "MlpPolicy",
+        env,
+        buffer_size=64,
+        learning_starts=100,
+        batch_size=16,
+        train_freq=1,
+        gradient_steps=1,
+        exploration_fraction=0.5,
+        exploration_initial_eps=1.0,
+        exploration_final_eps=0.1,
+        policy_kwargs={"net_arch": [16]},
+        seed=1234,
+        device="cpu",
+        verbose=0,
+    )
+    full_budget = 20
+    callback = FullTrainingBudgetCallback(full_budget)
+
+    for chunk, expected_step in ((5, 5), (7, 12), (8, 20)):
+        model.learn(
+            total_timesteps=chunk,
+            reset_num_timesteps=False,
+            progress_bar=False,
+            callback=callback,
+        )
+        expected_epsilon = model.exploration_schedule(1.0 - expected_step / full_budget)
+        assert model.num_timesteps == expected_step
+        assert model.exploration_rate == pytest.approx(expected_epsilon)
+        assert model._total_timesteps == full_budget
+
     env.close()
 
 

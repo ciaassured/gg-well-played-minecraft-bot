@@ -15,7 +15,7 @@ import numpy
 import stable_baselines3
 import torch
 from stable_baselines3 import DQN
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 
 from jump_trainer.config import EVALUATION_SEED_START, TrainConfig, validation_seeds
 from jump_trainer.console import emit, format_duration
@@ -31,6 +31,22 @@ from jump_trainer.recording import RecordingSession, recording_directory
 from jump_trainer.run_directory import RunDirectory
 
 TRAIN_PROGRESS_TIMESTEP_INTERVAL = 250
+
+
+class FullTrainingBudgetCallback(BaseCallback):
+    """Keep SB3 progress schedules tied to the complete chunked training run."""
+
+    def __init__(self, total_timesteps: int):
+        super().__init__(verbose=0)
+        if total_timesteps <= 0:
+            raise ValueError("total timesteps must be positive")
+        self.total_timesteps = total_timesteps
+
+    def _on_training_start(self) -> None:
+        self.model._total_timesteps = self.total_timesteps
+
+    def _on_step(self) -> bool:
+        return True
 
 
 class TrainingProgressCallback(BaseCallback):
@@ -261,6 +277,7 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
     history: list[dict[str, Any]] = []
     best_key: tuple[int, float, float] | None = None
     progress = TrainingProgressCallback(config.total_timesteps)
+    full_budget = FullTrainingBudgetCallback(config.total_timesteps)
     recording_interrupted = False
     command_status = "failed"
 
@@ -323,7 +340,7 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
                 total_timesteps=chunk,
                 reset_num_timesteps=False,
                 progress_bar=False,
-                callback=progress,
+                callback=CallbackList([full_budget, progress]),
             )
             step = model.num_timesteps
             candidate = run.candidate_checkpoint(step)
