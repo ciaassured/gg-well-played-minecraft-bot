@@ -184,7 +184,10 @@ public final class CoreTestMain {
     EpisodeController controller = activeController();
     controller.tick(11, new Kinematics(10, 9.4, 0, 0, 0, true), ArenaGeometry.STANDARD);
     var result =
-        controller.tick(21, new Kinematics(10, 9.4, 0, 0, 0, true), ArenaGeometry.STANDARD);
+        controller.tick(
+            11 + EpisodeController.ACTION_DEADLINE_TICKS,
+            new Kinematics(10, 9.4, 0, 0, 0, true),
+            ArenaGeometry.STANDARD);
     check(result.phase() == Phase.ABORTED, "deadline abort phase");
     check(result.reason() == EndReason.INFRASTRUCTURE_ERROR, "deadline abort reason");
   }

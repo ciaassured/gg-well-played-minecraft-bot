@@ -9,7 +9,9 @@ public final class EpisodeController {
   public static final int STABLE_TICKS_REQUIRED = 2;
   public static final int MISSED_JUMP_TICKS = 10;
   public static final int TIME_LIMIT_TICKS = 200;
-  public static final int ACTION_DEADLINE_TICKS = 10;
+  // Trainer transports fail independently after five seconds. This secondary guard allows
+  // normal batch-coordinator jitter at large pool widths while still bounding orphaned episodes.
+  public static final int ACTION_DEADLINE_TICKS = 200;
 
   private static final double STATIONARY_SPEED_SQUARED = 1.0e-8;
   private static final double NEGLIGIBLE_PROGRESS = 1.0e-3;
