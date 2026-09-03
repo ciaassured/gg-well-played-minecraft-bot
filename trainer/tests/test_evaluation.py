@@ -90,8 +90,7 @@ def test_evaluation_reports_visible_progress(capsys) -> None:
     env.close()
 
 
-def test_validation_preserves_the_training_seed_stream(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(training, "VALIDATION_SEEDS", (100_000, 100_001))
+def test_validation_preserves_the_training_seed_stream(tmp_path) -> None:
     control = MinecraftJumpEnv(
         connection_factory=SimulatedConnection,
         identifier_base=70_000,
@@ -104,15 +103,20 @@ def test_validation_preserves_the_training_seed_stream(tmp_path, monkeypatch) ->
     validated.reset(seed=1_234)
 
     expected_seed = _implicit_seed(control)
-    _validate_candidate(_validation_run(tmp_path), validated, _FixedActionModel(), 10)
+    _validate_candidate(
+        _validation_run(tmp_path),
+        validated,
+        _FixedActionModel(),
+        10,
+        (100_000, 100_001),
+    )
 
     assert _implicit_seed(validated) == expected_seed
     control.close()
     validated.close()
 
 
-def test_repeated_validation_does_not_restart_training_seeds(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(training, "VALIDATION_SEEDS", (100_000, 100_001))
+def test_repeated_validation_does_not_restart_training_seeds(tmp_path) -> None:
     control = MinecraftJumpEnv(
         connection_factory=SimulatedConnection,
         identifier_base=90_000,
@@ -126,9 +130,9 @@ def test_repeated_validation_does_not_restart_training_seeds(tmp_path, monkeypat
     expected_seeds = (_implicit_seed(control), _implicit_seed(control))
     run = _validation_run(tmp_path)
 
-    _validate_candidate(run, validated, _FixedActionModel(), 10)
+    _validate_candidate(run, validated, _FixedActionModel(), 10, (100_000, 100_001))
     actual_seeds = [_implicit_seed(validated)]
-    _validate_candidate(run, validated, _FixedActionModel(), 20)
+    _validate_candidate(run, validated, _FixedActionModel(), 20, (100_000, 100_001))
     actual_seeds.append(_implicit_seed(validated))
 
     assert tuple(actual_seeds) == expected_seeds
@@ -150,7 +154,13 @@ def test_validation_exception_restores_rng_state(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(training, "evaluate_policy", fail_evaluation)
     with pytest.raises(RuntimeError, match="scripted evaluation failure"):
-        _validate_candidate(_validation_run(tmp_path), env, _FixedActionModel(), 10)
+        _validate_candidate(
+            _validation_run(tmp_path),
+            env,
+            _FixedActionModel(),
+            10,
+            (100_000, 100_001),
+        )
 
     assert env.np_random is original_random
     assert env.np_random_seed == original_seed

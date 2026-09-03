@@ -17,7 +17,7 @@ import torch
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
 
-from jump_trainer.config import EVALUATION_SEED_START, VALIDATION_SEEDS, TrainConfig
+from jump_trainer.config import EVALUATION_SEED_START, TrainConfig, validation_seeds
 from jump_trainer.console import emit, format_duration
 from jump_trainer.env import MinecraftJumpEnv
 from jump_trainer.errors import InfrastructureError
@@ -168,6 +168,7 @@ def _validate_candidate(
     env: MinecraftJumpEnv,
     model: DQN,
     step: int,
+    episode_seeds: tuple[int, ...],
 ) -> EvaluationReport:
     env.set_recording_context(
         phase="validation",
@@ -180,7 +181,7 @@ def _validate_candidate(
         report = evaluate_policy(
             env,
             model_policy(model),
-            VALIDATION_SEEDS,
+            episode_seeds,
             policy_id=f"dqn-step-{step:08d}",
             suite="validation",
         )
@@ -209,6 +210,7 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
     """Train from scratch and retain every lexicographically promoted checkpoint."""
 
     config.validate()
+    selected_validation_seeds = validation_seeds(config.validation_episodes)
     run = RunDirectory.create(
         run_root,
         {
@@ -253,6 +255,7 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
         "schedule",
         f"total_timesteps={config.total_timesteps}, "
         f"validation_interval={config.validation_interval}, "
+        f"validation_episodes={config.validation_episodes}, "
         f"progress_interval={TRAIN_PROGRESS_TIMESTEP_INTERVAL}",
     )
     history: list[dict[str, Any]] = []
@@ -270,7 +273,13 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
         )
         initial_candidate = run.candidate_checkpoint(0)
         model.save(initial_candidate)
-        initial_report = _validate_candidate(run, env, model, 0)
+        initial_report = _validate_candidate(
+            run,
+            env,
+            model,
+            0,
+            selected_validation_seeds,
+        )
         best_key = promotion_key(initial_report)
         retained = run.promote(initial_candidate, 0)
         _log(
@@ -325,7 +334,13 @@ def train(config: TrainConfig, run_root: Path) -> RunDirectory:
                 f"saved; candidate={candidate.relative_to(run.root)}, "
                 f"latest={run.latest_checkpoint.relative_to(run.root)}",
             )
-            report = _validate_candidate(run, env, model, step)
+            report = _validate_candidate(
+                run,
+                env,
+                model,
+                step,
+                selected_validation_seeds,
+            )
             key = promotion_key(report)
             if best_key is None or key > best_key:
                 best_key = key

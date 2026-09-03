@@ -7,7 +7,8 @@ does not start Replay Mod or render video. Every command coordinates finalizatio
 with the persistent client, validates each Replay Mod archive and its reported
 size and digest, and atomically retains it before acknowledgement.
 
-Start `benchmark-server` and the unified `client-mod` first, then use:
+The root README is the canonical startup and Nix orchestration guide. These are
+the trainer-specific entry points:
 
 ```console
 nix develop ./trainer
@@ -16,7 +17,7 @@ nix flake check ./trainer
 (cd trainer && nix fmt)
 nix run ./trainer#smoke
 nix run ./trainer#evaluate -- --checkpoint <checkpoint.zip> [--episodes 100] [--output <report.json>]
-nix run ./trainer#train
+nix run ./trainer#train -- --help
 nix run ./trainer#run -- --run <run-directory>
 ```
 
@@ -34,18 +35,25 @@ one manifest and sequential `<ordinal>-seed-<seed>.mcpr` files.
 Training uses consistent one-line `[train]` and `[evaluate]` records instead of
 SB3's box tables. It prints its run directory immediately, reports learning
 every 250 timesteps with recent episode metrics, and reports periodic
-**validation** every ten episodes with successes, elapsed time, and an ETA.
-Both records include
+**validation** progress every ten episodes with successes, elapsed time, and an
+ETA. `train` requires a positive `--timesteps` budget; 30000 is the recommended
+reference value. The seed and validation interval default to 20260823 and 5000,
+and `--validation-episodes` defaults to 20 with an accepted range of 1 through
+100. Each run selects that many seeds once from the start of the fixed
+`100000..100099` validation partition and reuses the same subset at step zero
+and every periodic validation. Both training and validation records include
 `client_ticks/action` and `server_ticks/action`; values near `1.00` confirm that
 the policy is receiving one decision opportunity per game tick. Checkpoint and
-promotion decisions use the same format. Validation ranks candidates using the
-existing success, completion-time, and jump-request ordering and may promote a
-candidate to `checkpoints/best.zip`. It always reuses the fixed
-`100000..100099` suite without mutating the seed stream used by seedless
-training resets. The public `evaluate` command only measures a frozen checkpoint
-and never participates in promotion. Low CPU utilization is normal because each
-action is synchronized to a real 20 TPS Minecraft client; the small DQN update
-is not the throughput bottleneck.
+promotion decisions use the same format. Validation compares each candidate to
+the best seen so far using the existing success, completion-time, and
+jump-request ordering; `checkpoints/best.zip` is therefore the best historical
+checkpoint, not necessarily the latest. Validation does not mutate the seed
+stream used by seedless training resets or feed episodes into learning. The
+public `evaluate --episodes` command has an independent episode count and seed
+partition, only measures a frozen checkpoint, and never participates in
+promotion. Low CPU utilization is normal because each action is synchronized
+to a real 20 TPS Minecraft client; the small DQN update is not the throughput
+bottleneck.
 Pressing Ctrl-C during learning saves the current in-memory model as
 `checkpoints/latest.zip`, writes `metrics/training-interrupted.json`, and exits
 without a traceback. A later `train` command always starts a new run; use

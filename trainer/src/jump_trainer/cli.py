@@ -15,6 +15,7 @@ from jump_trainer.config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     SHOWCASE_SEED,
+    VALIDATION_SEEDS,
     TrainConfig,
     evaluation_seeds,
 )
@@ -55,6 +56,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _validation_episode_count(value: str) -> int:
+    parsed = _positive_int(value)
+    if parsed > len(VALIDATION_SEEDS):
+        raise argparse.ArgumentTypeError(f"must be at most {len(VALIDATION_SEEDS)}")
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jump-trainer")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -77,8 +85,13 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(os.environ.get("JUMP_TRAINER_RUN_ROOT", "trainer/runs")),
     )
-    training.add_argument("--timesteps", type=int, default=30_000)
-    training.add_argument("--validation-interval", type=int, default=5_000)
+    training.add_argument("--timesteps", type=_positive_int, required=True)
+    training.add_argument("--validation-interval", type=_positive_int, default=5_000)
+    training.add_argument(
+        "--validation-episodes",
+        type=_validation_episode_count,
+        default=20,
+    )
     training.add_argument("--seed", type=int, default=20_260_823)
     _add_connection_arguments(training)
 
@@ -258,6 +271,7 @@ def _train(arguments: argparse.Namespace) -> dict[str, Any]:
     config = TrainConfig(
         total_timesteps=int(arguments.timesteps),
         validation_interval=int(arguments.validation_interval),
+        validation_episodes=int(arguments.validation_episodes),
         random_seed=int(arguments.seed),
         host=str(arguments.host),
         port=int(arguments.port),

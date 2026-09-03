@@ -14,6 +14,59 @@ from jump_trainer.run_directory import RunDirectory
 from tests.fakes import SimulatedConnection
 
 
+def test_train_parser_requires_timesteps_and_resolves_defaults() -> None:
+    parser = cli._parser()
+
+    with pytest.raises(SystemExit) as missing:
+        parser.parse_args(["train"])
+    assert missing.value.code == 2
+
+    arguments = parser.parse_args(["train", "--timesteps", "30000"])
+    assert arguments.timesteps == 30_000
+    assert arguments.seed == 20_260_823
+    assert arguments.validation_interval == 5_000
+    assert arguments.validation_episodes == 20
+
+
+def test_train_parser_accepts_schedule_overrides() -> None:
+    arguments = cli._parser().parse_args(
+        [
+            "train",
+            "--timesteps",
+            "45000",
+            "--seed",
+            "7",
+            "--validation-interval",
+            "7500",
+            "--validation-episodes",
+            "100",
+        ]
+    )
+
+    assert arguments.timesteps == 45_000
+    assert arguments.seed == 7
+    assert arguments.validation_interval == 7_500
+    assert arguments.validation_episodes == 100
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ["train", "--timesteps", "0"],
+        ["train", "--timesteps", "-1"],
+        ["train", "--timesteps", "10", "--validation-interval", "0"],
+        ["train", "--timesteps", "10", "--validation-interval", "-1"],
+        ["train", "--timesteps", "10", "--validation-episodes", "0"],
+        ["train", "--timesteps", "10", "--validation-episodes", "-1"],
+        ["train", "--timesteps", "10", "--validation-episodes", "101"],
+    ),
+)
+def test_train_parser_rejects_invalid_schedule_values(arguments: list[str]) -> None:
+    with pytest.raises(SystemExit) as raised:
+        cli._parser().parse_args(arguments)
+    assert raised.value.code == 2
+
+
 def test_evaluate_parser_requires_checkpoint_and_defaults_to_100_episodes() -> None:
     parser = cli._parser()
     arguments = parser.parse_args(["evaluate", "--checkpoint", "best.zip"])
@@ -139,7 +192,7 @@ def test_keyboard_interrupt_exits_without_traceback(
     def interrupt(_arguments: object) -> dict[str, object]:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(sys, "argv", ["jump-trainer", "train"])
+    monkeypatch.setattr(sys, "argv", ["jump-trainer", "train", "--timesteps", "10"])
     monkeypatch.setattr(cli, "_train", interrupt)
     with pytest.raises(SystemExit) as raised:
         cli.main()

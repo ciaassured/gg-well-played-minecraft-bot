@@ -10,6 +10,7 @@ from jump_trainer.config import (
     VALIDATION_SEEDS,
     TrainConfig,
     evaluation_seeds,
+    validation_seeds,
 )
 
 
@@ -26,8 +27,31 @@ def test_seed_partitions_are_exact_and_disjoint() -> None:
 
 
 def test_training_configuration_validation() -> None:
-    TrainConfig().validate()
+    TrainConfig(total_timesteps=30_000).validate()
     with pytest.raises(ValueError, match="timesteps"):
         TrainConfig(total_timesteps=0).validate()
+    with pytest.raises(ValueError, match="validation_interval"):
+        TrainConfig(total_timesteps=30_000, validation_interval=0).validate()
+    with pytest.raises(ValueError, match="validation episodes"):
+        TrainConfig(total_timesteps=30_000, validation_episodes=0).validate()
+    with pytest.raises(ValueError, match="validation episodes"):
+        TrainConfig(total_timesteps=30_000, validation_episodes=101).validate()
     with pytest.raises(ValueError, match="buffer"):
-        TrainConfig(buffer_size=4, batch_size=8).validate()
+        TrainConfig(total_timesteps=30_000, buffer_size=4, batch_size=8).validate()
+
+
+@pytest.mark.parametrize("episode_count", (1, 20, 100))
+def test_validation_seed_counts_select_fixed_prefixes(episode_count: int) -> None:
+    assert validation_seeds(episode_count) == VALIDATION_SEEDS[:episode_count]
+
+
+@pytest.mark.parametrize("episode_count", (-1, 0, 101))
+def test_validation_seed_counts_reject_values_outside_partition(episode_count: int) -> None:
+    with pytest.raises(ValueError, match=r"1\.\.100"):
+        validation_seeds(episode_count)
+
+
+def test_training_configuration_serializes_resolved_validation_count() -> None:
+    config = TrainConfig(total_timesteps=30_000, validation_episodes=20)
+
+    assert config.as_dict()["validation_episodes"] == 20

@@ -29,8 +29,21 @@ Terminal 3:
 
 ```console
 nix run ./trainer#smoke
-nix run ./trainer#train
+nix run ./trainer#train -- \
+  --timesteps 30000 \
+  --seed 20260823 \
+  --validation-interval 5000 \
+  --validation-episodes 20
 ```
+
+`--timesteps` is required; `30000` is the recommended reference training
+budget, not an implicit default. `--seed` controls the DQN and training seed
+stream and defaults to `20260823`. `--validation-interval` controls how often a
+candidate checkpoint is measured and defaults to 5000 training steps.
+`--validation-episodes` controls the number of periodic validation episodes,
+defaults to 20, and selects that many seeds from the start of the fixed
+100-seed validation partition. Run
+`nix run ./trainer#train -- --help` for all training options.
 
 The client is persistent and has no training/recording mode. It always loads
 Replay Mod, waits for Replay Mod to finish starting, joins Paper, and then waits
@@ -81,9 +94,12 @@ timestamped artifacts under
 This command only reports performance: a completed evaluation exits `0`
 regardless of the checkpoint's results. Invalid arguments or infrastructure
 failures exit `2`, and interruption exits `130`. During training, periodic
-**validation** on its unchanged validation partition ranks candidates with the
-configured promotion ordering and may update `checkpoints/best.zip`; the public
-command neither validates nor promotes a checkpoint.
+**validation** uses the configured prefix of the fixed validation partition to
+rank each candidate against the best historical candidate. A strictly better
+candidate becomes `checkpoints/best.zip`, so the final file is the best observed
+checkpoint rather than necessarily the last one. The public `evaluate` command
+uses its independent episode count and evaluation seeds; it neither validates
+nor promotes a checkpoint.
 
 For a future YRush migration, replace the current one-block episode metrics and
 promotion ordering with authoritative YRush outcomes and performance criteria

@@ -19,8 +19,9 @@ DEFAULT_PORT = 64_123
 class TrainConfig:
     """Serializable DQN and validation settings for one training run."""
 
-    total_timesteps: int = 30_000
+    total_timesteps: int
     validation_interval: int = 5_000
+    validation_episodes: int = 20
     random_seed: int = 20_260_823
     learning_rate: float = 0.001
     buffer_size: int = 50_000
@@ -45,6 +46,7 @@ class TrainConfig:
             raise ValueError("total_timesteps must be positive")
         if self.validation_interval <= 0:
             raise ValueError("validation_interval must be positive")
+        validation_seeds(self.validation_episodes)
         if self.batch_size <= 0 or self.buffer_size < self.batch_size:
             raise ValueError("buffer_size must be at least batch_size")
         if not 0.0 <= self.exploration_final_epsilon <= self.exploration_initial_epsilon <= 1.0:
@@ -68,3 +70,11 @@ def evaluation_seeds(episode_count: int) -> tuple[int, ...]:
     if episode_count <= 0:
         raise ValueError("episodes must be positive")
     return tuple(range(EVALUATION_SEED_START, EVALUATION_SEED_START + episode_count))
+
+
+def validation_seeds(episode_count: int) -> tuple[int, ...]:
+    """Return a prefix of the fixed validation partition."""
+
+    if episode_count < 1 or episode_count > len(VALIDATION_SEEDS):
+        raise ValueError(f"validation episodes must be in 1..{len(VALIDATION_SEEDS)}")
+    return VALIDATION_SEEDS[:episode_count]
