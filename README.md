@@ -45,20 +45,6 @@ defaults to 20, and selects that many seeds from the start of the fixed
 100-seed validation partition. Run
 `nix run ./trainer#train -- --help` for all training options.
 
-The client is persistent and has no training/recording mode. It always loads
-Replay Mod, waits for Replay Mod to finish starting, joins Paper, and then waits
-for trainer commands on `127.0.0.1:64123`. Leave the same client running for
-`smoke`, `train`, `evaluate`, and `run` commands.
-
-Each trainer command records every Gym episode. At command end the client
-disconnects from Paper once, asks Replay Mod to post-process the episode split
-markers, and offers each resulting `.mcpr` to the trainer in episode order. The
-trainer validates and atomically retains each file before acknowledging it; the
-client then reconnects to Paper and waits for another command. Finalization is
-allowed five minutes by default. Override it with
-`JUMP_TRAINER_RECORDING_TIMEOUT` (seconds) and
-`JUMP_CLIENT_FINALIZATION_TIMEOUT_MILLIS` (milliseconds).
-
 To load that run's promoted `checkpoints/best.zip` later and execute the showcase episode without learning:
 
 ```console
@@ -166,33 +152,3 @@ canonical trainer-owned copy. Interrupted commands keep their interrupted exit
 status while attempting the same finalization; an active episode is recorded
 as partial. Unexpected trainer disconnection also preserves all untransferred
 staging files and the client reconnects automatically.
-
-Mutable Paper, client, and renderer caches default to each project's `runtime/`
-directory. They can be relocated with `JUMP_BENCHMARK_SERVER_RUNTIME`,
-`JUMP_CLIENT_RUNTIME`, and `JUMP_RENDERER_RUNTIME`. Training output can be
-relocated with `JUMP_TRAINER_RUN_ROOT`.
-
-## Development
-
-```console
-nix build ./protocol
-nix flake check ./protocol
-nix build ./benchmark-server
-nix flake check ./benchmark-server
-nix build ./client-mod
-nix flake check ./client-mod
-nix build ./trainer
-nix flake check ./trainer
-nix build ./replay-renderer
-nix flake check ./replay-renderer
-```
-
-Formatting remains project-local as well:
-
-```console
-(cd protocol && nix fmt)
-(cd benchmark-server && nix fmt)
-(cd client-mod && nix fmt)
-(cd trainer && nix fmt)
-(cd replay-renderer && nix fmt)
-```

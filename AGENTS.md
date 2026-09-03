@@ -23,3 +23,28 @@
 - `replay-renderer/` validates retained `.mcpr` archives and drives Replay Mod's
   camera-path renderer under Xvfb and Mesa software OpenGL, then verifies the
   resulting MP4 with `ffprobe`. It neither captures episodes nor trains models.
+
+## Development
+
+```console
+nix build ./protocol
+nix flake check ./protocol
+nix build ./benchmark-server
+nix flake check ./benchmark-server
+nix build ./client-mod
+nix flake check ./client-mod
+nix build ./trainer
+nix flake check ./trainer
+nix build ./replay-renderer
+nix flake check ./replay-renderer
+```
+
+Formatting remains project-local as well:
+
+```console
+(cd protocol && nix fmt)
+(cd benchmark-server && nix fmt)
+(cd client-mod && nix fmt)
+(cd trainer && nix fmt)
+(cd replay-renderer && nix fmt)
+```
