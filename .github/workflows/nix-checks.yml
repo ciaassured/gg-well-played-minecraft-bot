@@ -80,7 +80,15 @@ jobs:
             gg-well-played-minecraft-bot-server \
             gg-well-played-minecraft-bot-client \
             gg-well-played-minecraft-bot-trainer; do
-            gh api --method PATCH \
-              "/orgs/ciaassured/packages/container/$image" \
-              --field visibility=public
+            for attempt in {1..12}; do
+              if gh api --method PATCH \
+                "/orgs/ciaassured/packages/container/$image" \
+                --field visibility=public; then
+                break
+              fi
+              if [[ "$attempt" == 12 ]]; then
+                exit 1
+              fi
+              sleep 5
+            done
           done
