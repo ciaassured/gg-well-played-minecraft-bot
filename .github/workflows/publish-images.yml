@@ -35,23 +35,15 @@ jobs:
 
       - name: Build all images before publishing any
         run: |
-          nix build ./benchmark-server#oci --out-link result-server
-          nix build ./client-mod#oci --out-link result-client
-          nix build ./trainer#oci --out-link result-trainer
+          nix run ./benchmark-server#image -- build result-server
+          nix run ./client-mod#image -- build result-client
+          nix run ./trainer#image -- build result-trainer
 
       - name: Publish commit-tagged images to GHCR
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          declare -A images=(
-            [server]=gg-well-played-minecraft-bot-server
-            [client]=gg-well-played-minecraft-bot-client
-            [trainer]=gg-well-played-minecraft-bot-trainer
-          )
-          for component in server client trainer; do
-            nix shell nixpkgs#skopeo --command skopeo copy \
-              --dest-creds "$GHCR_USER:$GHCR_TOKEN" \
-              "docker-archive:result-$component" \
-              "docker://ghcr.io/ciaassured/${images[$component]}:$IMAGE_REVISION"
-          done
+          nix run ./benchmark-server#image -- publish "$IMAGE_REVISION"
+          nix run ./client-mod#image -- publish "$IMAGE_REVISION"
+          nix run ./trainer#image -- publish "$IMAGE_REVISION"

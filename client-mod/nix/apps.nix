@@ -69,6 +69,13 @@
           --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
       '';
     };
+    imageCommand = import ./image-app.nix {
+      inherit pkgs;
+      commandName = "jump-client-image";
+      component = "client";
+      imageArchive = clientArtifacts.oci;
+      imageName = "ghcr.io/ciaassured/gg-well-played-minecraft-bot-client";
+    };
   in {
     apps.headless = {
       type = "app";
@@ -79,6 +86,11 @@
       type = "app";
       program = "${launcher}/bin/jump-benchmark-headless";
       meta.description = "Start one persistent Fabric benchmark client";
+    };
+    apps.image = {
+      type = "app";
+      program = "${imageCommand}/bin/jump-client-image";
+      meta.description = "Build, load, or publish the HeadlessMC client OCI image";
     };
   };
 }

@@ -120,9 +120,29 @@ Formatting is also project-local:
 (cd replay-renderer && nix fmt)
 ```
 
-The server, client, and trainer flakes expose independent `#oci` archives.
-After every successful flake-check workflow, the separate image workflow
-publishes all three amd64 GHCR images with the same full Git commit tag. Each
-GHCR package must be made public once in its package settings; that visibility
-then applies to later versions. GitOps manifests pin immutable digests and
-upgrade the intentionally incompatible protocol-v3 images together.
+Only the deployable server, client, and trainer flakes produce images. Each
+exposes its independent `#oci` archive through the same component-local image
+app:
+
+```console
+nix run ./benchmark-server#image
+nix run ./client-mod#image
+nix run ./trainer#image
+```
+
+Those commands create `result-server-image`, `result-client-image`, and
+`result-trainer-image` links. To prove an image in the local Podman store, run
+the corresponding command with `-- load <tag>`; set
+`JUMP_LOCAL_IMAGE_TRANSPORT=docker-daemon` to target Docker instead.
+
+After every successful flake-check workflow, the separate image workflow calls
+the same apps to pre-build all three archives before publishing any of them,
+then calls `#image -- publish <full-commit>` for each component. This keeps
+GitHub as the normal coordinated image builder and publisher while making its
+exact build path available locally. A developer with `GHCR_USER` and
+`GHCR_TOKEN` may invoke the publish action directly for a short-lived cluster
+test tag.
+
+Each GHCR package must be made public once in its package settings; that
+visibility then applies to later versions. GitOps manifests pin immutable
+digests and upgrade the intentionally incompatible protocol-v3 images together.

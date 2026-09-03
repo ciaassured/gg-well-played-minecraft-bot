@@ -10,6 +10,7 @@ load Replay Mod.
 nix develop ./client-mod
 nix build ./client-mod
 nix build ./client-mod#oci
+nix run ./client-mod#image
 nix flake check ./client-mod
 (cd client-mod && nix fmt)
 nix run ./client-mod#headless
@@ -37,3 +38,7 @@ Each Kubernetes StatefulSet ordinal mounts a 2 GiB PVC at `/runtime`, so the
 first public Minecraft download is reused after restarts. Container memory
 limits must remain at least 512 MiB above `JUMP_CLIENT_XMX` for native JVM/LWJGL
 memory and filesystem cache.
+
+The `#image` app builds `result-client-image`. Use `#image -- load <tag>` to
+load the same archive into Podman, or set `JUMP_LOCAL_IMAGE_TRANSPORT` to
+`docker-daemon` for Docker. The root README documents coordinated publication.

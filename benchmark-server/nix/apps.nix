@@ -62,6 +62,13 @@
         exec java -Xms"$server_xms" -Xmx"$server_xmx" -jar paper.jar --nogui "$@"
       '';
     };
+    imageCommand = import ./image-app.nix {
+      inherit pkgs;
+      commandName = "jump-server-image";
+      component = "server";
+      imageArchive = serverArtifacts.oci;
+      imageName = "ghcr.io/ciaassured/gg-well-played-minecraft-bot-server";
+    };
   in {
     apps.server = {
       type = "app";
@@ -72,6 +79,11 @@
       type = "app";
       program = "${launcher}/bin/jump-benchmark-server";
       meta.description = "Start the isolated Paper 26.2 benchmark server";
+    };
+    apps.image = {
+      type = "app";
+      program = "${imageCommand}/bin/jump-server-image";
+      meta.description = "Build, load, or publish the benchmark server OCI image";
     };
   };
 }

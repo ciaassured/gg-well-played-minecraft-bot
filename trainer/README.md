@@ -9,6 +9,7 @@ artifacts. It never starts Paper or Minecraft and contains no recording code.
 nix develop ./trainer
 nix build ./trainer
 nix build ./trainer#oci
+nix run ./trainer#image
 nix flake check ./trainer
 (cd trainer && nix fmt)
 nix run ./trainer#smoke
@@ -42,3 +43,7 @@ from `(run seed, client ordinal)`.
 `pipeline` trains and promotes with the established lexicographic ordering,
 then evaluates `best.zip` in the same process and Job. `capacity` exercises the
 same actor/inference coordinator with a scripted policy and no learning.
+
+The `#image` app builds `result-trainer-image`. Use `#image -- load <tag>` to
+load the same archive into Podman, or set `JUMP_LOCAL_IMAGE_TRANSPORT` to
+`docker-daemon` for Docker. The root README documents coordinated publication.

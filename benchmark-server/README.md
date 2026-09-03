@@ -14,6 +14,7 @@ lane limit.
 nix develop ./benchmark-server
 nix build ./benchmark-server
 nix build ./benchmark-server#oci
+nix run ./benchmark-server#image
 nix flake check ./benchmark-server
 (cd benchmark-server && nix fmt)
 nix run ./benchmark-server#server
@@ -26,3 +27,7 @@ Paper's `max-players` value at startup. `JUMP_SERVER_XMS` and
 `1g`. Server simulation and view distances are both two chunks, which covers
 the fixed 24-block arena. The Paper and matching Mojang server JARs are pinned
 in the Nix package, so server startup does not require network egress.
+
+The `#image` app builds `result-server-image`. Use `#image -- load <tag>` to
+load the same archive into Podman, or set `JUMP_LOCAL_IMAGE_TRANSPORT` to
+`docker-daemon` for Docker. The root README documents coordinated publication.

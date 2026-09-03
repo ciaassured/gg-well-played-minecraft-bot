@@ -19,6 +19,13 @@
       program = "${wrapper}/bin/jump-trainer-${name}";
       meta.description = "Run the Minecraft jump trainer ${subcommand} command";
     };
+    imageCommand = import ./image-app.nix {
+      inherit pkgs;
+      commandName = "jump-trainer-image";
+      component = "trainer";
+      imageArchive = trainerArtifacts.oci;
+      imageName = "ghcr.io/ciaassured/gg-well-played-minecraft-bot-trainer";
+    };
   in {
     apps = {
       default = mkCommand "train" "train";
@@ -28,6 +35,11 @@
       smoke = mkCommand "smoke" "smoke";
       pipeline = mkCommand "pipeline" "pipeline";
       capacity = mkCommand "capacity" "capacity";
+      image = {
+        type = "app";
+        program = "${imageCommand}/bin/jump-trainer-image";
+        meta.description = "Build, load, or publish the trainer OCI image";
+      };
     };
   };
 }
