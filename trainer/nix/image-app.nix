@@ -96,9 +96,11 @@ pkgs.writeShellApplication {
           exit 2
         fi
         registry="''${image_name%%/*}"
-        auth_file="$(mktemp -t jump-image-auth.XXXXXX)"
+        auth_dir="$(mktemp -d -t jump-image-auth.XXXXXX)"
+        auth_file="$auth_dir/auth.json"
         cleanup() {
           rm -f -- "$auth_file"
+          rmdir -- "$auth_dir" 2>/dev/null || true
         }
         trap cleanup EXIT
         printf '%s' "$GHCR_TOKEN" | skopeo login \
