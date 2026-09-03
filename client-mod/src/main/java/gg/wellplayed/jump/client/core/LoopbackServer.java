@@ -12,7 +12,7 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Single-peer, loopback-only TCP endpoint used by the local Python trainer. */
+/** Single-peer TCP endpoint used by the Python trainer. */
 public final class LoopbackServer implements Closeable {
   public interface Listener {
     void connected(long connectionId);
@@ -25,6 +25,7 @@ public final class LoopbackServer implements Closeable {
   private record Peer(long connectionId, Socket socket) {}
 
   private final int port;
+  private final InetAddress bindAddress;
   private final Listener listener;
   private final AtomicBoolean running = new AtomicBoolean();
   private final AtomicLong nextConnectionId = new AtomicLong(1);
@@ -33,10 +34,19 @@ public final class LoopbackServer implements Closeable {
   private volatile Peer peer;
 
   public LoopbackServer(int port, Listener listener) {
+    this(InetAddress.getLoopbackAddress(), port, listener);
+  }
+
+  public LoopbackServer(String bindAddress, int port, Listener listener) {
+    this(resolve(bindAddress), port, listener);
+  }
+
+  private LoopbackServer(InetAddress bindAddress, int port, Listener listener) {
     if (port < 1 || port > 65535) {
       throw new IllegalArgumentException("port is outside 1..65535");
     }
     this.port = port;
+    this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress");
     this.listener = Objects.requireNonNull(listener, "listener");
   }
 
@@ -46,8 +56,8 @@ public final class LoopbackServer implements Closeable {
     }
     serverSocket = new ServerSocket();
     serverSocket.setReuseAddress(true);
-    serverSocket.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 1);
-    Thread.ofPlatform().daemon(true).name("jump-trainer-loopback").start(this::acceptLoop);
+    serverSocket.bind(new InetSocketAddress(bindAddress, port), 1);
+    Thread.ofPlatform().daemon(true).name("jump-trainer-listener").start(this::acceptLoop);
   }
 
   public boolean connected() {
@@ -126,6 +136,17 @@ public final class LoopbackServer implements Closeable {
     }
     if (serverSocket != null) {
       serverSocket.close();
+    }
+  }
+
+  private static InetAddress resolve(String address) {
+    if (address == null || address.isBlank()) {
+      throw new IllegalArgumentException("bind address must not be blank");
+    }
+    try {
+      return InetAddress.getByName(address);
+    } catch (IOException exception) {
+      throw new IllegalArgumentException("cannot resolve bind address: " + address, exception);
     }
   }
 }

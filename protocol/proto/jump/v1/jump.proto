@@ -6,14 +6,14 @@ option java_multiple_files = true;
 option java_outer_classname = "JumpProtocol";
 option java_package = "gg.wellplayed.jump.protocol.v1";
 
-// Protocol v2 uses WireMessage as the sole top-level value on both transports. TCP adds a
+// Protocol v3 uses WireMessage as the sole top-level value on both transports. TCP adds a
 // four-byte unsigned big-endian length prefix; Minecraft custom payloads use
 // their existing packet framing. Receivers reject payloads larger than 1 MiB.
 message WireMessage {
   uint32 protocol_version = 1;
 
-  reserved 21 to 23;
-  reserved "capture_request", "capture_ready", "capture_complete";
+  reserved 21 to 27;
+  reserved "capture_request", "capture_ready", "capture_complete", "command_finalize", "episode_artifact", "retention_acknowledgement", "batch_complete";
 
   oneof payload {
     ConnectionHello connection_hello = 10;
@@ -27,10 +27,6 @@ message WireMessage {
     EpisodeResult episode_result = 18;
     ProtocolError error = 19;
     Shutdown shutdown = 20;
-    CommandFinalize command_finalize = 24;
-    EpisodeArtifact episode_artifact = 25;
-    RetentionAcknowledgement retention_acknowledgement = 26;
-    BatchComplete batch_complete = 27;
   }
 }
 
@@ -70,12 +66,6 @@ enum ErrorCode {
   ERROR_CODE_ACTION_TIMEOUT = 6;
   ERROR_CODE_RESET_TIMEOUT = 7;
   ERROR_CODE_INTERNAL = 9;
-}
-
-enum EpisodeRecordingStatus {
-  EPISODE_RECORDING_STATUS_UNSPECIFIED = 0;
-  EPISODE_RECORDING_STATUS_COMPLETE = 1;
-  EPISODE_RECORDING_STATUS_PARTIAL = 2;
 }
 
 message ConnectionHello {
@@ -208,63 +198,4 @@ message Shutdown {
   string session_id = 3;
   uint64 episode_id = 4;
   string reason = 5;
-}
-
-// CommandFinalize ends the recording batch associated with one trainer TCP
-// connection. Fabric stops any active episode as partial, disconnects from
-// Paper once, and asks Replay Mod to post-process all episode split markers.
-message CommandFinalize {
-  uint32 protocol_version = 1;
-  uint64 request_id = 2;
-  string session_id = 3;
-  uint64 active_episode_id = 4;
-  string reason = 5;
-  bool interrupted = 6;
-  uint32 transfer_timeout_seconds = 7;
-}
-
-// EpisodeArtifact offers one finalized staging file. Ordinals begin at zero
-// and follow reset order for the command. The client offers the next artifact
-// only after this one is acknowledged or its acknowledgement times out.
-message EpisodeArtifact {
-  uint32 protocol_version = 1;
-  uint64 request_id = 2;
-  string session_id = 3;
-  uint32 ordinal = 4;
-  uint64 episode_id = 5;
-  uint64 seed = 6;
-  EpisodeRecordingStatus recording_status = 7;
-  TerminalReason terminal_reason = 8;
-  string staging_path = 9;
-  uint64 size_bytes = 10;
-  bytes sha256 = 11;
-}
-
-// A negative acknowledgement preserves the staging source but lets the client
-// continue offering later artifacts. A positive acknowledgement authorizes
-// deletion only when the identifiers and digest match the outstanding offer.
-message RetentionAcknowledgement {
-  uint32 protocol_version = 1;
-  uint64 request_id = 2;
-  string session_id = 3;
-  uint32 ordinal = 4;
-  uint64 episode_id = 5;
-  bytes sha256 = 6;
-  bool retained = 7;
-  string detail = 8;
-}
-
-// BatchComplete is emitted after every available artifact has been handled.
-// Fabric reconnects to Paper after sending it, even when some files remain in
-// staging for recovery.
-message BatchComplete {
-  uint32 protocol_version = 1;
-  uint64 request_id = 2;
-  string session_id = 3;
-  uint32 expected_artifacts = 4;
-  uint32 offered_artifacts = 5;
-  uint32 retained_artifacts = 6;
-  uint32 preserved_artifacts = 7;
-  repeated string warnings = 8;
-  bool reconnecting_minecraft = 9;
 }

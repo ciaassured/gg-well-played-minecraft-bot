@@ -35,7 +35,7 @@ def main() -> None:
     source = SCHEMA.read_text(encoding="utf-8")
     assert 'package jump.v1;' in source
     assert "payloads larger than 1 MiB" in source
-    assert "protocol v2" in source.lower()
+    assert "protocol v3" in source.lower()
 
     require_fields(
         source,
@@ -82,50 +82,6 @@ def main() -> None:
         "Shutdown",
         {"protocol_version", "request_id", "session_id", "episode_id", "reason"},
     )
-    require_fields(
-        source,
-        "CommandFinalize",
-        {
-            "protocol_version",
-            "request_id",
-            "session_id",
-            "active_episode_id",
-            "interrupted",
-            "transfer_timeout_seconds",
-        },
-    )
-    require_fields(
-        source,
-        "EpisodeArtifact",
-        {
-            "protocol_version",
-            "request_id",
-            "session_id",
-            "ordinal",
-            "episode_id",
-            "seed",
-            "recording_status",
-            "terminal_reason",
-            "staging_path",
-            "size_bytes",
-            "sha256",
-        },
-    )
-    require_fields(
-        source,
-        "RetentionAcknowledgement",
-        {
-            "protocol_version",
-            "request_id",
-            "session_id",
-            "ordinal",
-            "episode_id",
-            "sha256",
-            "retained",
-            "detail",
-        },
-    )
-
     observation = fields(message_body(source, "Observation"))
     forbidden = {"image", "yaw", "pitch", "inventory", "nearby_blocks", "yrush"}
     assert observation.isdisjoint(forbidden), "observation leaked a forbidden feature"
@@ -140,10 +96,6 @@ def main() -> None:
         "observation",
         "error",
         "shutdown",
-        "command_finalize",
-        "episode_artifact",
-        "retention_acknowledgement",
-        "batch_complete",
     }:
         assert re.search(rf"\b{payload}\s*=", wire), f"WireMessage lacks {payload}"
 
@@ -151,8 +103,28 @@ def main() -> None:
     assert "CaptureRequest" not in source
     assert "CaptureReady" not in source
     assert "CaptureComplete" not in source
-    assert re.search(r'reserved\s+21\s+to\s+23\s*;', wire)
-    assert 'reserved "capture_request", "capture_ready", "capture_complete";' in wire
+    assert re.search(r"reserved\s+21\s+to\s+27\s*;", wire)
+    for number in range(24, 28):
+        assert not re.search(rf"=\s*{number}\s*;", wire), f"removed field {number} was reused"
+    for removed in {
+        "capture_request",
+        "capture_ready",
+        "capture_complete",
+        "command_finalize",
+        "episode_artifact",
+        "retention_acknowledgement",
+        "batch_complete",
+    }:
+        assert f'"{removed}"' in wire, f"removed name {removed} is not reserved"
+        assert removed not in fields(wire), f"removed field {removed} was restored"
+    for removed_type in {
+        "CommandFinalize",
+        "EpisodeArtifact",
+        "RetentionAcknowledgement",
+        "BatchComplete",
+        "EpisodeRecordingStatus",
+    }:
+        assert not re.search(rf"\b(?:message|enum)\s+{removed_type}\b", source)
     assert "mode" not in fields(message_body(source, "ConnectionHello"))
     assert "mode" not in fields(message_body(source, "ConnectionReady"))
 

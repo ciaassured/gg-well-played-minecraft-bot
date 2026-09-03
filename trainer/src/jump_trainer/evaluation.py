@@ -31,6 +31,11 @@ class EpisodeMetrics:
     max_client_ticks_per_action: int
     mean_server_ticks_per_action: float
     max_server_ticks_per_action: int
+    client_index: int | None = None
+    client_ordinal: int | None = None
+    endpoint: str | None = None
+    action_latency_ms_p95: float | None = None
+    action_latency_ms_p99: float | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,9 @@ class EvaluationReport:
     max_client_ticks_per_action: int
     mean_server_ticks_per_action: float
     max_server_ticks_per_action: int
+    action_latency_ms: dict[str, float | None] | None = None
+    throughput_transitions_per_second: float | None = None
+    per_client: dict[str, Any] | None = None
 
     @property
     def success_rate(self) -> float:
@@ -70,6 +78,9 @@ class EvaluationReport:
             "max_client_ticks_per_action": self.max_client_ticks_per_action,
             "mean_server_ticks_per_action": self.mean_server_ticks_per_action,
             "max_server_ticks_per_action": self.max_server_ticks_per_action,
+            "action_latency_ms": self.action_latency_ms,
+            "throughput_transitions_per_second": self.throughput_transitions_per_second,
+            "per_client": self.per_client,
             "episodes": [asdict(episode) for episode in self.episodes],
         }
 

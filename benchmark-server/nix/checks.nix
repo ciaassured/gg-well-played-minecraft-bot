@@ -39,6 +39,13 @@
 
       plugin-build = serverArtifacts.plugin;
 
+      container-entrypoint-smoke = pkgs.runCommand "jump-server-entrypoint-smoke" {} ''
+        output=$(JUMP_ENTRYPOINT_VALIDATE=1 JUMP_CLIENT_COUNT=101 \
+          ${serverArtifacts.containerEntrypoint}/bin/jump-server-container)
+        test "$output" = "clients=101 heap=512m..1g runtime=/data"
+        touch "$out"
+      '';
+
       protobuf-isolation =
         pkgs.runCommand "jump-server-protobuf-isolation" {
           nativeBuildInputs = [pkgs.jdk25_headless];

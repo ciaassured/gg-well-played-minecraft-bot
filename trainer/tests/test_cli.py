@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 import jump_trainer.cli as cli
+from jump_trainer.endpoints import Endpoint
 from jump_trainer.env import NOOP, MinecraftJumpEnv
+from jump_trainer.pool import ClientPool
 from jump_trainer.run_directory import RunDirectory
 from tests.fakes import SimulatedConnection
 
@@ -137,8 +138,14 @@ def test_zero_success_evaluation_writes_report_and_exits_zero(
             return FixedModel()
 
     monkeypatch.setattr(cli, "DQN", FakeDQN)
-    monkeypatch.setattr(cli, "_recording", lambda _arguments, _command: nullcontext(object()))
-    monkeypatch.setattr(cli, "_environment", lambda _arguments, _recording: env)
+    pool = ClientPool(
+        (Endpoint(0, "127.0.0.1", 64_123),),
+        startup_timeout=1,
+        message_timeout=1,
+        reset_retries=1,
+        environment_factory=lambda _endpoint: env,
+    )
+    monkeypatch.setattr(cli, "_pool", lambda _arguments, _endpoints: pool)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -184,6 +191,15 @@ def test_capture_command_is_removed() -> None:
     parser = cli._parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["capture"])
+
+
+def test_pipeline_requires_unique_run_id() -> None:
+    parser = cli._parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["pipeline", "--timesteps", "2000"])
+    parsed = parser.parse_args(["pipeline", "--run-id", "smoke-001", "--timesteps", "2000"])
+    assert parsed.run_id == "smoke-001"
+    assert parsed.evaluation_episodes == 100
 
 
 def test_keyboard_interrupt_exits_without_traceback(

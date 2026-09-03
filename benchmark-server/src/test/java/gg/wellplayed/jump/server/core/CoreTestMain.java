@@ -15,6 +15,8 @@ public final class CoreTestMain {
 
   public static void main(String[] args) {
     arenaMeetsSpecification();
+    laneTranslationIsIsolated();
+    lanesAllocateAndReuseLowestOrdinal();
     seededGapsAreDeterministicAndUniform();
     resetsAreIdempotentAndSequenced();
     readinessNeedsTwoStableTicks();
@@ -39,6 +41,31 @@ public final class CoreTestMain {
     close(5.7, arena.spawnCenterX(8.0), "maximum gap spawn");
     check(arena.landingLength() == 9.0, "nine flat landing blocks");
     check(arena.endBarrierX() == 24, "containment follows the landing floor");
+  }
+
+  private static void laneTranslationIsIsolated() {
+    ArenaGeometry arena = ArenaGeometry.STANDARD;
+    close(0.5, arena.laneCenterZ(0), "lane zero center");
+    close(8.5, arena.laneCenterZ(1), "lane one center");
+    check(arena.laneMinZ(17) == 135, "lane translation has no coded ceiling");
+    check(arena.laneMaxZ(17) == 137, "translated lane width");
+    check(arena.lanesAreIsolated(0, 1), "adjacent lanes have an air gap");
+    check(arena.lanesAreIsolated(100, 101), "high ordinal lanes remain isolated");
+    throwsType(IllegalArgumentException.class, () -> arena.laneOffsetZ(-1));
+  }
+
+  private static void lanesAllocateAndReuseLowestOrdinal() {
+    LaneAllocator lanes = new LaneAllocator();
+    check(lanes.acquire() == 0, "first lane");
+    check(lanes.acquire() == 1, "second simultaneous lane");
+    check(lanes.acquire() == 2, "third simultaneous lane");
+    lanes.release(1);
+    check(lanes.acquire() == 1, "released lane is reused first");
+    lanes.release(0);
+    lanes.release(1);
+    lanes.release(2);
+    check(lanes.size() == 0, "all lanes released");
+    throwsType(IllegalStateException.class, () -> lanes.release(0));
   }
 
   private static void seededGapsAreDeterministicAndUniform() {
@@ -189,5 +216,23 @@ public final class CoreTestMain {
     if (!condition) {
       throw new AssertionError(message);
     }
+  }
+
+  private static void throwsType(Class<? extends Throwable> expected, ThrowingAction action) {
+    assertions++;
+    try {
+      action.run();
+    } catch (Throwable failure) {
+      if (expected.isInstance(failure)) {
+        return;
+      }
+      throw new AssertionError("unexpected exception", failure);
+    }
+    throw new AssertionError("expected " + expected.getSimpleName());
+  }
+
+  @FunctionalInterface
+  private interface ThrowingAction {
+    void run() throws Exception;
   }
 }

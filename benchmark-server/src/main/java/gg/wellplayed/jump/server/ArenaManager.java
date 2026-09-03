@@ -29,19 +29,23 @@ final class ArenaManager {
   Location initialize(World world) {
     requireMainThread();
     configureWorld(world);
-    repairArena(world);
     Location initialSpawn =
         new Location(
-            world, geometry.spawnCenterX(6.0), geometry.standingFeetY(), 0.5, -90.0f, 0.0f);
+            world,
+            geometry.spawnCenterX(6.0),
+            geometry.standingFeetY(),
+            geometry.laneCenterZ(0),
+            -90.0f,
+            0.0f);
     world.setSpawnLocation(initialSpawn);
     return initialSpawn;
   }
 
-  double prepare(Player player, double gap) {
+  double prepare(Player player, double gap, int laneOrdinal) {
     requireMainThread();
     World world = player.getWorld();
     configureWorld(world);
-    repairArena(world);
+    repairLane(world, laneOrdinal);
 
     player.setGameMode(GameMode.ADVENTURE);
     player.setWalkSpeed(DEFAULT_WALK_SPEED);
@@ -65,20 +69,27 @@ final class ArenaManager {
     }
 
     double spawnX = geometry.spawnCenterX(gap);
-    Location spawn = new Location(world, spawnX, geometry.standingFeetY(), 0.5, -90.0f, 0.0f);
+    Location spawn =
+        new Location(
+            world,
+            spawnX,
+            geometry.standingFeetY(),
+            geometry.laneCenterZ(laneOrdinal),
+            -90.0f,
+            0.0f);
     player.setVelocity(new Vector());
     player.teleport(spawn, PlayerTeleportEvent.TeleportCause.PLUGIN);
     player.setVelocity(new Vector());
     return spawnX;
   }
 
-  boolean isStable(Player player, double expectedSpawnX) {
+  boolean isStable(Player player, double expectedSpawnX, int laneOrdinal) {
     requireMainThread();
     Vector velocity = player.getVelocity();
     return player.isOnGround()
         && horizontalSpeedSquared(velocity) <= 1.0e-8
         && Math.abs(player.getX() - expectedSpawnX) <= POSITION_TOLERANCE
-        && Math.abs(player.getZ() - 0.5) <= POSITION_TOLERANCE
+        && Math.abs(player.getZ() - geometry.laneCenterZ(laneOrdinal)) <= POSITION_TOLERANCE
         && Math.abs(player.getY() - geometry.standingFeetY()) <= POSITION_TOLERANCE;
   }
 
@@ -111,16 +122,16 @@ final class ArenaManager {
     world.setTime(6000L);
   }
 
-  private void repairArena(World world) {
+  private void repairLane(World world, int laneOrdinal) {
     for (int x = geometry.floorMinX(); x <= geometry.floorMaxX(); x++) {
-      for (int z = geometry.laneMinZ(); z <= geometry.laneMaxZ(); z++) {
+      for (int z = geometry.laneMinZ(laneOrdinal); z <= geometry.laneMaxZ(laneOrdinal); z++) {
         world.getBlockAt(x, geometry.floorY(), z).setType(Material.SMOOTH_STONE, false);
         for (int y = geometry.floorY() + 1; y <= geometry.floorY() + 4; y++) {
           world.getBlockAt(x, y, z).setType(Material.AIR, false);
         }
       }
     }
-    for (int z = geometry.laneMinZ(); z <= geometry.laneMaxZ(); z++) {
+    for (int z = geometry.laneMinZ(laneOrdinal); z <= geometry.laneMaxZ(laneOrdinal); z++) {
       world
           .getBlockAt(geometry.wallX(), geometry.floorY() + 1, z)
           .setType(Material.SMOOTH_STONE, false);

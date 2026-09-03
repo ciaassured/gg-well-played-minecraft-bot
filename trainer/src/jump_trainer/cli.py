@@ -1,10 +1,11 @@
-"""Command-line entry points for training, evaluation, smoke tests, and inference."""
+"""Pool-aware training, pipeline, capacity, evaluation, and inference commands."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,47 +13,49 @@ from typing import Any
 from stable_baselines3 import DQN
 
 from jump_trainer.config import (
-    DEFAULT_HOST,
-    DEFAULT_PORT,
     SHOWCASE_SEED,
     VALIDATION_SEEDS,
     TrainConfig,
     evaluation_seeds,
 )
+from jump_trainer.endpoints import Endpoint, resolve_endpoints
 from jump_trainer.env import MinecraftJumpEnv
 from jump_trainer.errors import InfrastructureError
-from jump_trainer.evaluation import (
-    evaluate_policy,
-    model_policy,
-    scripted_one_jump_policy,
+from jump_trainer.parallel_training import run_parallel
+from jump_trainer.pool import (
+    ClientPool,
+    ModelBatchPolicy,
+    ScriptedBatchPolicy,
+    TrainingSeedStreams,
 )
-from jump_trainer.recording import RecordingSession, recording_directory
-from jump_trainer.run_directory import (
-    RunDirectory,
-    atomic_write_json,
-    find_run_for_checkpoint,
-)
-from jump_trainer.training import train
+from jump_trainer.run_directory import RunDirectory, atomic_write_json, find_run_for_checkpoint
+
+_termination_signal: int | None = None
 
 
-def _add_connection_arguments(
-    parser: argparse.ArgumentParser,
-) -> None:
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--timeout", type=float, default=5.0)
-    parser.add_argument("--reset-retries", type=int, default=3)
-    parser.add_argument(
-        "--recording-timeout",
-        type=float,
-        default=float(os.environ.get("JUMP_TRAINER_RECORDING_TIMEOUT", "300")),
-    )
+def _deployment() -> dict[str, Any]:
+    return {
+        "cluster_revision": os.environ.get("JUMP_CLUSTER_REVISION", "local"),
+        "git_revision": os.environ.get("JUMP_GIT_REVISION", "unknown"),
+        "images": {
+            "server": os.environ.get("JUMP_SERVER_IMAGE_REVISION", "local"),
+            "client": os.environ.get("JUMP_CLIENT_IMAGE_REVISION", "local"),
+            "trainer": os.environ.get("JUMP_TRAINER_IMAGE_REVISION", "local"),
+        },
+    }
 
 
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive")
     return parsed
 
 
@@ -63,71 +66,125 @@ def _validation_episode_count(value: str) -> int:
     return parsed
 
 
+def _add_connection_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--endpoint", action="append", default=[], metavar="HOST:PORT")
+    parser.add_argument("--endpoint-template")
+    parser.add_argument("--clients", type=_positive_int)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--timeout", type=_positive_float, default=5.0)
+    parser.add_argument("--reset-retries", type=_positive_int, default=3)
+    parser.add_argument(
+        "--pool-startup-timeout",
+        type=_positive_float,
+        default=float(os.environ.get("JUMP_POOL_STARTUP_TIMEOUT", "30")),
+    )
+
+
+def _add_training_arguments(parser: argparse.ArgumentParser, *, require_run_id: bool) -> None:
+    parser.add_argument(
+        "--run-root",
+        type=Path,
+        default=Path(os.environ.get("JUMP_TRAINER_RUN_ROOT", "trainer/runs")),
+    )
+    parser.add_argument("--run-id", required=require_run_id)
+    parser.add_argument("--timesteps", type=_positive_int, required=True)
+    parser.add_argument("--validation-interval", type=_positive_int, default=5_000)
+    parser.add_argument(
+        "--validation-episodes",
+        type=_validation_episode_count,
+        default=20,
+    )
+    parser.add_argument("--seed", type=int, default=20_260_823)
+    _add_connection_arguments(parser)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jump-trainer")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    smoke = commands.add_parser("smoke", help="prove reset and one scripted remote episode")
+    smoke = commands.add_parser("smoke", help="run the showcase episode on every client")
     smoke.add_argument("--seed", type=int, default=SHOWCASE_SEED)
     _add_connection_arguments(smoke)
 
-    evaluate = commands.add_parser(
-        "evaluate", help="report deterministic checkpoint performance without learning"
-    )
+    evaluate = commands.add_parser("evaluate", help="evaluate a frozen checkpoint in parallel")
     evaluate.add_argument("--checkpoint", type=Path, required=True)
     evaluate.add_argument("--episodes", type=_positive_int, default=100)
     evaluate.add_argument("--output", type=Path)
     _add_connection_arguments(evaluate)
 
-    training = commands.add_parser("train", help="train DQN from scratch")
-    training.add_argument(
-        "--run-root",
-        type=Path,
-        default=Path(os.environ.get("JUMP_TRAINER_RUN_ROOT", "trainer/runs")),
+    training = commands.add_parser("train", help="train one shared DQN with a client pool")
+    _add_training_arguments(training, require_run_id=False)
+
+    pipeline = commands.add_parser(
+        "pipeline", help="train, promote, and finally evaluate one shared DQN"
     )
-    training.add_argument("--timesteps", type=_positive_int, required=True)
-    training.add_argument("--validation-interval", type=_positive_int, default=5_000)
-    training.add_argument(
-        "--validation-episodes",
-        type=_validation_episode_count,
-        default=20,
-    )
-    training.add_argument("--seed", type=int, default=20_260_823)
-    _add_connection_arguments(training)
+    _add_training_arguments(pipeline, require_run_id=True)
+    pipeline.add_argument("--evaluation-episodes", type=_positive_int, default=100)
 
     run = commands.add_parser("run", help="run a saved checkpoint without learning")
     checkpoint = run.add_mutually_exclusive_group(required=True)
     checkpoint.add_argument("--run", type=Path)
     checkpoint.add_argument("--checkpoint", type=Path)
-    run.add_argument("--episodes", type=int, default=1)
+    run.add_argument("--episodes", type=_positive_int, default=1)
     run.add_argument("--seed", type=int, default=SHOWCASE_SEED)
     run.add_argument("--output", type=Path)
     _add_connection_arguments(run)
 
+    capacity = commands.add_parser(
+        "capacity", help="measure sustained scripted-policy pool throughput without learning"
+    )
+    capacity.add_argument(
+        "--transitions",
+        "--timesteps",
+        dest="transitions",
+        type=_positive_int,
+        default=2_000,
+    )
+    capacity.add_argument("--seed", type=int, default=20_260_823)
+    capacity.add_argument("--output", type=Path)
+    _add_connection_arguments(capacity)
     return parser
 
 
-def _recording(arguments: argparse.Namespace, command: str) -> RecordingSession:
-    directory = recording_directory(command)
-    return RecordingSession(
-        command,
-        directory,
-        host=str(arguments.host),
-        port=int(arguments.port),
-        message_timeout=float(arguments.timeout),
-        recording_timeout=float(arguments.recording_timeout),
+def _endpoints(arguments: argparse.Namespace) -> tuple[Endpoint, ...]:
+    endpoint_values = list(arguments.endpoint)
+    endpoint_template = arguments.endpoint_template
+    clients = arguments.clients
+    if not endpoint_values and endpoint_template is None and arguments.host is None:
+        endpoint_template = os.environ.get("JUMP_ENDPOINT_TEMPLATE")
+        configured_clients = os.environ.get("JUMP_CLIENT_COUNT")
+        if endpoint_template is not None and clients is None and configured_clients is not None:
+            clients = int(configured_clients)
+    return resolve_endpoints(
+        endpoint_values=endpoint_values,
+        endpoint_template=endpoint_template,
+        clients=clients,
+        host=arguments.host,
+        port=arguments.port,
     )
 
 
-def _environment(arguments: argparse.Namespace, recording: RecordingSession) -> MinecraftJumpEnv:
+def _pool(arguments: argparse.Namespace, endpoints: tuple[Endpoint, ...]) -> ClientPool:
+    return ClientPool(
+        endpoints,
+        startup_timeout=float(arguments.pool_startup_timeout),
+        message_timeout=float(arguments.timeout),
+        reset_retries=int(arguments.reset_retries),
+    )
+
+
+def _environment(arguments: argparse.Namespace) -> MinecraftJumpEnv:
+    """Single-endpoint compatibility helper for embedding the Gymnasium environment."""
+
+    endpoint = _endpoints(arguments)
+    if len(endpoint) != 1:
+        raise ValueError("a single Gymnasium environment requires exactly one endpoint")
     return MinecraftJumpEnv(
-        host=str(arguments.host),
-        port=int(arguments.port),
+        host=endpoint[0].host,
+        port=endpoint[0].port,
         timeout=float(arguments.timeout),
         reset_retries=int(arguments.reset_retries),
-        connection_factory=recording.connection,
-        episode_recorder=recording,
-        owns_connection=False,
     )
 
 
@@ -148,34 +205,158 @@ def _evaluate(arguments: argparse.Namespace) -> dict[str, Any]:
     if not checkpoint.is_file():
         raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
     seeds = evaluation_seeds(int(arguments.episodes))
+    endpoints = _endpoints(arguments)
     model = DQN.load(checkpoint, device="cpu")
-    policy_id = checkpoint.stem
-    with _recording(arguments, "evaluate") as recording:
-        env = _environment(arguments, recording)
-        env.set_recording_context(
-            policy_id=policy_id,
+    with _pool(arguments, endpoints) as pool:
+        report = pool.evaluate(
+            ModelBatchPolicy(model),
+            seeds,
+            policy_id=checkpoint.stem,
             suite="performance",
-            checkpoint=str(checkpoint),
         )
-        try:
-            report = evaluate_policy(
-                env,
-                model_policy(model),
-                seeds,
-                policy_id,
-                "performance",
-            )
-            result: dict[str, Any] = {
-                "checkpoint": str(checkpoint),
-                "seed_range": {"start": seeds[0], "end": seeds[-1]},
-                "evaluation": report.as_dict(),
-            }
-            output = arguments.output or _default_evaluation_output(checkpoint, len(seeds))
+        result: dict[str, Any] = {
+            "checkpoint": str(checkpoint),
+            "seed_range": {"start": seeds[0], "end": seeds[-1]},
+            "client_count": len(endpoints),
+            "clients": [endpoint.as_dict() for endpoint in endpoints],
+            "deployment": _deployment(),
+            "evaluation": report.as_dict(),
+            "pool": pool.stats(),
+        }
+        output = arguments.output or _default_evaluation_output(checkpoint, len(seeds))
+        atomic_write_json(Path(output), result)
+        result["report_file"] = str(Path(output).resolve())
+        return result
+
+
+def _run(arguments: argparse.Namespace) -> dict[str, Any]:
+    run_directory: RunDirectory | None = None
+    if arguments.run:
+        run_directory = RunDirectory.open(Path(arguments.run))
+        checkpoint = run_directory.best_checkpoint
+    else:
+        checkpoint = Path(arguments.checkpoint).resolve()
+    if not checkpoint.is_file():
+        raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
+    endpoints = _endpoints(arguments)
+    seeds = tuple(int(arguments.seed) + offset for offset in range(int(arguments.episodes)))
+    model = DQN.load(checkpoint, device="cpu")
+    with _pool(arguments, endpoints) as pool:
+        report = pool.evaluate(
+            ModelBatchPolicy(model), seeds, policy_id=checkpoint.stem, suite="run"
+        )
+        result: dict[str, Any] = {
+            "checkpoint": str(checkpoint),
+            "client_count": len(endpoints),
+            "clients": [endpoint.as_dict() for endpoint in endpoints],
+            "deployment": _deployment(),
+            "evaluation": report.as_dict(),
+            "pool": pool.stats(),
+        }
+        output = arguments.output
+        if output is None and run_directory is not None:
+            output = run_directory.metrics / "latest-run.json"
+        if output is not None:
             atomic_write_json(Path(output), result)
             result["report_file"] = str(Path(output).resolve())
-        finally:
-            env.close()
-    return result
+        return result
+
+
+def _smoke(arguments: argparse.Namespace) -> dict[str, Any]:
+    endpoints = _endpoints(arguments)
+    with _pool(arguments, endpoints) as pool:
+        report = pool.evaluate(
+            ScriptedBatchPolicy(),
+            (int(arguments.seed),) * len(endpoints),
+            policy_id="one-jump-smoke",
+            suite="smoke",
+            require_unique_seeds=False,
+        )
+        if report.success_count != len(endpoints) or any(
+            episode.jump_requests != 1 for episode in report.episodes
+        ):
+            raise RuntimeError("scripted smoke did not succeed exactly once on every endpoint")
+        return {
+            "smoke": "passed",
+            "client_count": len(endpoints),
+            "clients": [endpoint.as_dict() for endpoint in endpoints],
+            "deployment": _deployment(),
+            "evaluation": report.as_dict(),
+            "pool": pool.stats(),
+        }
+
+
+def _capacity(arguments: argparse.Namespace) -> dict[str, Any]:
+    endpoints = _endpoints(arguments)
+    requested = int(arguments.transitions)
+    with _pool(arguments, endpoints) as pool:
+        collection = pool.collect(
+            requested_total=requested,
+            actual_total=0,
+            first_cycle=0,
+            seeds=TrainingSeedStreams(int(arguments.seed), endpoints),
+            policy=ScriptedBatchPolicy(),
+            transition_sink=lambda _transitions, _cycle: None,
+        )
+        result = {
+            "status": "complete",
+            "learning": False,
+            "requested_transitions": requested,
+            "actual_transitions": collection.actual_transitions,
+            "overshoot": collection.actual_transitions - requested,
+            "client_count": len(endpoints),
+            "clients": [endpoint.as_dict() for endpoint in endpoints],
+            "deployment": _deployment(),
+            "throughput_transitions_per_second": collection.throughput,
+            "pool": pool.stats(),
+        }
+        if arguments.output is not None:
+            atomic_write_json(Path(arguments.output), result)
+            result["report_file"] = str(Path(arguments.output).resolve())
+        return result
+
+
+def _train_config(arguments: argparse.Namespace, endpoints: tuple[Endpoint, ...]) -> TrainConfig:
+    return TrainConfig(
+        total_timesteps=int(arguments.timesteps),
+        validation_interval=int(arguments.validation_interval),
+        validation_episodes=int(arguments.validation_episodes),
+        random_seed=int(arguments.seed),
+        host=endpoints[0].host,
+        port=endpoints[0].port,
+        message_timeout_seconds=float(arguments.timeout),
+        reset_retries=int(arguments.reset_retries),
+        endpoints=tuple(endpoint.address for endpoint in endpoints),
+        pool_startup_timeout_seconds=float(arguments.pool_startup_timeout),
+    )
+
+
+def _train(arguments: argparse.Namespace) -> dict[str, Any]:
+    endpoints = _endpoints(arguments)
+    run = run_parallel(
+        _train_config(arguments, endpoints),
+        Path(arguments.run_root),
+        endpoints,
+        run_id=arguments.run_id,
+    )
+    return {"status": "complete", "run_directory": str(run.root)}
+
+
+def _pipeline(arguments: argparse.Namespace) -> dict[str, Any]:
+    endpoints = _endpoints(arguments)
+    run = run_parallel(
+        _train_config(arguments, endpoints),
+        Path(arguments.run_root),
+        endpoints,
+        run_id=str(arguments.run_id),
+        final_evaluation_episodes=int(arguments.evaluation_episodes),
+    )
+    return {
+        "status": "complete",
+        "run_id": str(arguments.run_id),
+        "run_directory": str(run.root),
+        "best_checkpoint": str(run.best_checkpoint),
+    }
 
 
 def _optional_metric(value: Any) -> str:
@@ -194,6 +375,7 @@ def _evaluation_summary(result: dict[str, Any]) -> str:
     return "\n".join(
         (
             f"checkpoint: {result['checkpoint']}",
+            f"clients: {result['client_count']}",
             f"episodes/seeds: {episode_count}; "
             f"{seed_range['start']}..{seed_range['end']} inclusive",
             f"successes: {success_count}/{episode_count} ({float(evaluation['success_rate']):.2%})",
@@ -213,93 +395,32 @@ def _evaluation_summary(result: dict[str, Any]) -> str:
     )
 
 
-def _run(arguments: argparse.Namespace) -> dict[str, Any]:
-    run_directory: RunDirectory | None = None
-    if arguments.run:
-        run_directory = RunDirectory.open(Path(arguments.run))
-        checkpoint = run_directory.best_checkpoint
-    else:
-        checkpoint = Path(arguments.checkpoint).resolve()
-    if not checkpoint.is_file():
-        raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
-    if arguments.episodes <= 0:
-        raise ValueError("episodes must be positive")
-    model = DQN.load(checkpoint, device="cpu")
-    seeds = tuple(int(arguments.seed) + offset for offset in range(int(arguments.episodes)))
-    with _recording(arguments, "run") as recording:
-        env = _environment(arguments, recording)
-        env.set_recording_context(
-            policy_id=checkpoint.stem,
-            suite="run",
-            checkpoint=str(checkpoint),
-        )
-        try:
-            report = evaluate_policy(env, model_policy(model), seeds, checkpoint.stem, "run")
-            result = {"checkpoint": str(checkpoint), "evaluation": report.as_dict()}
-            output = arguments.output
-            if output is None and run_directory is not None:
-                output = run_directory.metrics / "latest-run.json"
-            if output is not None:
-                atomic_write_json(Path(output), result)
-                result["report_file"] = str(Path(output).resolve())
-        finally:
-            env.close()
-    return result
-
-
-def _smoke(arguments: argparse.Namespace) -> dict[str, Any]:
-    with _recording(arguments, "smoke") as recording:
-        env = _environment(arguments, recording)
-        env.set_recording_context(policy_id="one-jump-smoke", suite="smoke")
-        try:
-            report = evaluate_policy(
-                env,
-                scripted_one_jump_policy(),
-                (int(arguments.seed),),
-                "one-jump-smoke",
-                "smoke",
-            )
-            if report.success_count != 1 or report.episodes[0].jump_requests != 1:
-                raise RuntimeError("scripted one-jump smoke episode did not succeed exactly once")
-            result = {"smoke": "passed", "evaluation": report.as_dict()}
-        finally:
-            env.close()
-    return result
-
-
-def _train(arguments: argparse.Namespace) -> dict[str, Any]:
-    config = TrainConfig(
-        total_timesteps=int(arguments.timesteps),
-        validation_interval=int(arguments.validation_interval),
-        validation_episodes=int(arguments.validation_episodes),
-        random_seed=int(arguments.seed),
-        host=str(arguments.host),
-        port=int(arguments.port),
-        message_timeout_seconds=float(arguments.timeout),
-        recording_timeout_seconds=float(arguments.recording_timeout),
-        reset_retries=int(arguments.reset_retries),
-    )
-    run = train(config, Path(arguments.run_root))
-    return {"status": "complete", "run_directory": str(run.root)}
+def _handle_termination(signum: int, _frame: Any) -> None:
+    global _termination_signal
+    _termination_signal = signum
+    raise KeyboardInterrupt
 
 
 def main() -> None:
+    signal.signal(signal.SIGTERM, _handle_termination)
     arguments = _parser().parse_args()
     try:
-        if arguments.command == "smoke":
-            result = _smoke(arguments)
-        elif arguments.command == "evaluate":
-            result = _evaluate(arguments)
-        elif arguments.command == "train":
-            result = _train(arguments)
-        elif arguments.command == "run":
-            result = _run(arguments)
-        else:
-            raise AssertionError(f"unhandled command: {arguments.command}")
+        handlers = {
+            "smoke": _smoke,
+            "evaluate": _evaluate,
+            "train": _train,
+            "pipeline": _pipeline,
+            "run": _run,
+            "capacity": _capacity,
+        }
+        result = handlers[arguments.command](arguments)
     except (InfrastructureError, OSError, ValueError, RuntimeError) as exception:
         print(f"jump-trainer: {exception}", file=sys.stderr)
         raise SystemExit(2) from exception
     except KeyboardInterrupt:
+        if _termination_signal == signal.SIGTERM:
+            print("jump-trainer: interrupted by SIGTERM", file=sys.stderr)
+            raise SystemExit(143) from None
         print("jump-trainer: interrupted by user", file=sys.stderr)
         raise SystemExit(130) from None
     if arguments.command == "evaluate":

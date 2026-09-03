@@ -19,6 +19,13 @@
     checks = {
       package-build = trainerArtifacts.trainer;
 
+      container-entrypoint-smoke = pkgs.runCommand "jump-trainer-entrypoint-smoke" {} ''
+        ${trainerArtifacts.trainer}/bin/jump-trainer --help > help.txt
+        grep -q pipeline help.txt
+        grep -q capacity help.txt
+        touch "$out"
+      '';
+
       tests =
         pkgs.runCommand "minecraft-jump-trainer-tests" {
           nativeBuildInputs = [pkgs.protobuf trainerArtifacts.pythonEnv];

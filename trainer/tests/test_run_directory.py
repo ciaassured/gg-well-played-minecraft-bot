@@ -9,8 +9,8 @@ from jump_trainer.run_directory import RunDirectory, find_run_for_checkpoint
 def test_run_layout_json_and_checkpoint_promotion(tmp_path: Path) -> None:
     run = RunDirectory.create(tmp_path, {"trainer": {"timesteps": 10}})
     assert run.root.is_dir()
-    assert run.replays.is_dir()
-    assert run.videos.is_dir()
+    assert not (run.root / "replays").exists()
+    assert not (run.root / "videos").exists()
     assert json.loads((run.root / "config.json").read_text())["trainer"]["timesteps"] == 10
 
     candidate = run.candidate_checkpoint(5)
@@ -19,3 +19,14 @@ def test_run_layout_json_and_checkpoint_promotion(tmp_path: Path) -> None:
     assert retained.read_bytes() == b"checkpoint"
     assert run.best_checkpoint.read_bytes() == b"checkpoint"
     assert find_run_for_checkpoint(retained) == run
+
+
+def test_named_run_refuses_overwrite(tmp_path: Path) -> None:
+    run = RunDirectory.create(tmp_path, {"trainer": {}}, run_id="reference-001")
+    assert run.root == (tmp_path / "reference-001").resolve()
+    try:
+        RunDirectory.create(tmp_path, {"trainer": {}}, run_id="reference-001")
+    except FileExistsError:
+        pass
+    else:
+        raise AssertionError("named run was overwritten")

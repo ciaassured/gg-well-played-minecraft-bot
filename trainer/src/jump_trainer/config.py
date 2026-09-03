@@ -10,7 +10,7 @@ TRAIN_SEED_MAX = 99_999
 VALIDATION_SEEDS = tuple(range(100_000, 100_100))
 EVALUATION_SEED_START = 200_000
 SHOWCASE_SEED = 100_000
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 64_123
 
@@ -38,8 +38,9 @@ class TrainConfig:
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     message_timeout_seconds: float = 5.0
-    recording_timeout_seconds: float = 300.0
     reset_retries: int = 3
+    endpoints: tuple[str, ...] = ()
+    pool_startup_timeout_seconds: float = 30.0
 
     def validate(self) -> None:
         if self.total_timesteps <= 0:
@@ -55,10 +56,12 @@ class TrainConfig:
             raise ValueError("port must be in 1..65535")
         if self.message_timeout_seconds <= 0:
             raise ValueError("message timeout must be positive")
-        if self.recording_timeout_seconds <= 0:
-            raise ValueError("recording timeout must be positive")
         if self.reset_retries < 1:
             raise ValueError("reset_retries must be positive")
+        if self.pool_startup_timeout_seconds <= 0:
+            raise ValueError("pool startup timeout must be positive")
+        if len(set(self.endpoints)) != len(self.endpoints):
+            raise ValueError("configured endpoints must be unique")
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

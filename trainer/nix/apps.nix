@@ -11,8 +11,6 @@
         text = ''
           export JUMP_TRAINER_RUN_ROOT="''${JUMP_TRAINER_RUN_ROOT:-$PWD/trainer/runs}"
           export JUMP_TRAINER_OUTPUT_ROOT="''${JUMP_TRAINER_OUTPUT_ROOT:-$PWD/trainer/evaluations}"
-          export JUMP_TRAINER_RECORDING_ROOT="''${JUMP_TRAINER_RECORDING_ROOT:-$PWD/trainer/recordings}"
-          export JUMP_TRAINER_RECORDING_TIMEOUT="''${JUMP_TRAINER_RECORDING_TIMEOUT:-300}"
           exec jump-trainer ${subcommand} "$@"
         '';
       };
@@ -28,6 +26,8 @@
       evaluate = mkCommand "evaluate" "evaluate";
       run = mkCommand "run" "run";
       smoke = mkCommand "smoke" "smoke";
+      pipeline = mkCommand "pipeline" "pipeline";
+      capacity = mkCommand "capacity" "capacity";
     };
   };
 }

@@ -1,54 +1,39 @@
 # Fabric client bridge
 
-This project owns the Minecraft 26.2 Fabric client, its HeadlessMC runtime, and
-the tick-synchronous bridge between one local Python trainer and the Paper
-benchmark server. It does not choose seeds, calculate rewards, train models, or
-manage the Paper process.
-
-The client listens only on `127.0.0.1:64123`. It forwards versioned protobuf
-reset and episode messages on `jump:control`, applies one `NOOP` or `JUMP` on
-the next client tick, holds forward during active episodes, and releases every
-controlled input on terminal states and transport failures. It relays the
-applied action to Paper after that movement tick has completed, so Paper checks
-the resulting server-side position without adding another idle client tick.
-The one persistent client always loads pinned Replay Mod 2.6.27. It waits for
-Replay Mod startup before joining, starts logically cut, opens one clip for each
-accepted reset, and closes and splits that clip after its terminal tick. At
-trainer command end it disconnects from Paper once so Replay Mod can
-post-process every split, offers the resulting files sequentially, and
-reconnects after the batch even when retention fails. An active episode is
-marked partial when the command is interrupted or the trainer disappears.
+This project packages the Fabric bridge and an isolated HeadlessMC runtime. A
+client maintains its Minecraft connection across trainer commands, exposes one
+single-peer trainer socket, applies one action per tick, and releases every
+controlled input on either transport failure. It does not record episodes or
+load Replay Mod.
 
 ```console
 nix develop ./client-mod
 nix build ./client-mod
+nix build ./client-mod#oci
 nix flake check ./client-mod
 (cd client-mod && nix fmt)
 nix run ./client-mod#headless
 ```
 
-Start the Paper project first. HeadlessMC installs the pinned Fabric Loader
-0.19.3 into `client-mod/runtime/client` and joins `127.0.0.1:25565`. Null-driver
-settings and client mixins bypass both host audio and speech/audio native
-initialization. Its `headlessmc.log` records launcher messages at INFO and above,
-retaining INFO/WARN/ERROR records while omitting FINE diagnostics; Minecraft's
-own logging threshold is unchanged.
+Configuration is external:
 
-The launcher deliberately uses an offline Minecraft session against the local
-offline-mode Paper server. The client routes profile-key lookup through authlib's
-offline service to avoid an unnecessary authenticated request. Vanilla Realms
-requests can still log non-fatal authorization errors; they do not prevent the
-benchmark connection.
+- `JUMP_CLIENT_RUNTIME` selects the persistent runtime/cache directory.
+- `JUMP_PAPER_ADDRESS` selects Paper (default `127.0.0.1:25565` locally).
+- `JUMP_TRAINER_BIND` and `JUMP_TRAINER_PORT` select the trainer listener
+  (default `127.0.0.1:64123` locally; Kubernetes sets `0.0.0.0:64123`).
+- `JUMP_CLIENT_USERNAME` selects the offline name. Otherwise the launcher
+  derives `jumpbot-<ordinal>` from `POD_NAME`.
+- `JUMP_CLIENT_READINESS_FILE` selects the readiness path.
+- `JUMP_CLIENT_XMS` and `JUMP_CLIENT_XMX` select the client JVM heap.
 
-The launcher allows 60 rendered/task frames per second and the bridge resets
-Minecraft's inactivity timer on every client tick. This prevents vanilla's
-10-FPS long-AFK throttle from reducing observation/action throughput; the game
-and authoritative server simulation still run at the normal 20 ticks per
-second.
-Set `JUMP_CLIENT_RUNTIME` to place that mutable runtime elsewhere. Recording
-source files are finalized beneath `<runtime>/game/replay_recordings`; this is
-staging, not the canonical archive. The client deletes a source only after the
-trainer acknowledges its validated, atomically published copy. Failed,
-unacknowledged, and unexpectedly disconnected batches remain there for manual
-recovery. `JUMP_CLIENT_FINALIZATION_TIMEOUT_MILLIS` changes the default
-five-minute finalization ceiling.
+Readiness is published atomically only after the trainer listener is bound and
+Paper acknowledges protocol v3. It is removed on Paper loss. Kubernetes uses
+an exec file probe because connecting to port 64123 would consume its sole
+trainer peer. Unexpected trainer loss aborts the active episode and releases
+controls without disconnecting Minecraft. Paper loss is reported to a connected
+trainer and retried with exponential backoff capped at 30 seconds.
+
+Each Kubernetes StatefulSet ordinal mounts a 2 GiB PVC at `/runtime`, so the
+first public Minecraft download is reused after restarts. Container memory
+limits must remain at least 512 MiB above `JUMP_CLIENT_XMX` for native JVM/LWJGL
+memory and filesystem cache.

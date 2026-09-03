@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,14 +16,34 @@ class RunDirectory:
     root: Path
 
     @classmethod
-    def create(cls, parent: Path, configuration: dict[str, Any]) -> RunDirectory:
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        root = parent / f"run-{timestamp}"
-        suffix = 1
-        while root.exists():
-            root = parent / f"run-{timestamp}-{suffix}"
-            suffix += 1
-        run = cls(root.resolve())
+    def create(
+        cls,
+        parent: Path,
+        configuration: dict[str, Any],
+        run_id: str | None = None,
+    ) -> RunDirectory:
+        if run_id is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_id):
+            raise ValueError("run ID must be a single safe path component")
+        parent = parent.resolve()
+        parent.mkdir(parents=True, exist_ok=True)
+        if run_id is not None:
+            root = parent / run_id
+            try:
+                root.mkdir()
+            except FileExistsError as exception:
+                raise FileExistsError(f"run ID already exists: {run_id}") from exception
+        else:
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            root = parent / f"run-{timestamp}"
+            suffix = 1
+            while True:
+                try:
+                    root.mkdir()
+                    break
+                except FileExistsError:
+                    root = parent / f"run-{timestamp}-{suffix}"
+                    suffix += 1
+        run = cls(root)
         run.prepare()
         run.write_json("config.json", configuration)
         return run
@@ -41,8 +62,6 @@ class RunDirectory:
             self.candidates,
             self.promoted,
             self.metrics,
-            self.replays,
-            self.videos,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
@@ -61,14 +80,6 @@ class RunDirectory:
     @property
     def metrics(self) -> Path:
         return self.root / "metrics"
-
-    @property
-    def replays(self) -> Path:
-        return self.root / "replays"
-
-    @property
-    def videos(self) -> Path:
-        return self.root / "videos"
 
     @property
     def untrained_checkpoint(self) -> Path:

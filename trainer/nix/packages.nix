@@ -42,12 +42,29 @@
 
       meta.mainProgram = "jump-trainer";
     };
+    oci = pkgs.dockerTools.buildLayeredImage {
+      name = "ghcr.io/ciaassured/gg-well-played-minecraft-bot-trainer";
+      tag = "unstable";
+      maxLayers = 120;
+      contents = [trainer pkgs.cacert];
+      config = {
+        Entrypoint = ["${trainer}/bin/jump-trainer"];
+        WorkingDir = "/artifacts";
+        Env = [
+          "JUMP_TRAINER_RUN_ROOT=/artifacts/runs"
+          "JUMP_TRAINER_OUTPUT_ROOT=/artifacts/evaluations"
+          "JUMP_POOL_STARTUP_TIMEOUT=900"
+        ];
+      };
+    };
   in {
     packages.default = trainer;
     packages.trainer = trainer;
+    packages.oci = oci;
+    packages.container = oci;
 
     _module.args.trainerArtifacts = {
-      inherit python pythonPackages pythonEnv runtimePackages trainer;
+      inherit oci python pythonPackages pythonEnv runtimePackages trainer;
     };
   };
 }

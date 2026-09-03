@@ -1,29 +1,27 @@
 # Benchmark server
 
-This sibling project owns the Paper-side truth: fixed arena construction,
-seeded reset state, authoritative elapsed ticks, and success/missed-jump/time
-limit results. It has no Python socket and does not launch a Minecraft client.
-All world and player changes are scheduled on Paper's main thread.
+This project packages one Paper 26.2 process and the authoritative benchmark
+plugin. It owns resets, episode time, observations, and terminal decisions; it
+does not run a Python service or launch clients.
 
-Pinned runtime: Minecraft/Paper `26.2` build `112`, Java `25`, Protobuf Java
-`4.35.1`. Runtime state defaults to `benchmark-server/runtime/`; override it
-with `JUMP_BENCHMARK_SERVER_RUNTIME`.
-
-Commands:
+Each established player session receives the lowest free nonnegative lane
+ordinal. Lanes are constructed lazily, translated by eight blocks on Z, and
+repaired independently on reset. Ordinals are released when players leave.
+Benchmark players are non-collidable and mutually hidden. There is no coded
+lane limit.
 
 ```console
 nix develop ./benchmark-server
 nix build ./benchmark-server
+nix build ./benchmark-server#oci
 nix flake check ./benchmark-server
-nix fmt ./benchmark-server
+(cd benchmark-server && nix fmt)
 nix run ./benchmark-server#server
 ```
 
-The server uses offline mode only for the isolated local benchmark. It accepts
-one player on `localhost:25565`, rebuilds the arena on every accepted reset, and
-communicates solely through the `jump:control` Minecraft custom-payload channel.
-The fixed lane is a smooth-stone sky platform at Y=300 in a structure-free
-superflat world. Paper builds it and moves the world spawn onto it before the
-first player joins. A three-block-high barrier after nine flat landing blocks
-contains time-limited policies without changing the one-block jump itself.
-Animals, NPCs, monsters, weather, and daylight changes are disabled.
+Mutable state defaults to `benchmark-server/runtime`; set
+`JUMP_BENCHMARK_SERVER_RUNTIME` to relocate it. `JUMP_CLIENT_COUNT` generates
+Paper's `max-players` value at startup. `JUMP_SERVER_XMS` and
+`JUMP_SERVER_XMX` configure the JVM heap, with local defaults of `512m` and
+`1g`. Server simulation and view distances are both two chunks, which covers
+the fixed 24-block arena.

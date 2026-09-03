@@ -6,8 +6,6 @@ import socket
 import struct
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Protocol
 
 from jump.v1 import jump_pb2 as pb
@@ -17,35 +15,6 @@ from jump_trainer.errors import InfrastructureError, ProtocolStateError, Protoco
 from jump_trainer.messages import RawObservation
 
 MAX_MESSAGE_BYTES = 1024 * 1024
-
-
-@dataclass(frozen=True)
-class RecordingArtifact:
-    request_id: int
-    session_id: str
-    ordinal: int
-    episode_id: int
-    seed: int
-    recording_status: int
-    terminal_reason: int
-    staging_path: Path
-    sha256: bytes
-    size_bytes: int
-
-
-@dataclass(frozen=True)
-class RecordingBatch:
-    request_id: int
-    session_id: str
-    expected_artifacts: int
-    offered_artifacts: int
-    retained_artifacts: int
-    preserved_artifacts: int
-    warnings: tuple[str, ...]
-    reconnecting_minecraft: bool
-
-
-ArtifactHandler = Callable[[RecordingArtifact], tuple[bool, str]]
 
 
 class MessageTransport(Protocol):
@@ -135,14 +104,17 @@ class BenchmarkConnection:
         self.server_tick = 0
         self.current_episode_id = 0
         self._episode_active = False
-        self._episode_count = 0
         self._closed = False
-        self._finalized = False
         self._handshake()
 
     @classmethod
     def connect(cls, host: str, port: int, timeout: float) -> BenchmarkConnection:
-        return cls(SocketMessageTransport.connect(host, port, timeout))
+        transport = SocketMessageTransport.connect(host, port, timeout)
+        try:
+            return cls(transport)
+        except BaseException:
+            transport.close()
+            raise
 
     def _handshake(self) -> None:
         hello: Any | None = None
@@ -175,8 +147,6 @@ class BenchmarkConnection:
         seed: int,
         retries: int,
     ) -> RawObservation:
-        if self._finalized:
-            raise ProtocolStateError("cannot reset after command recording finalization")
         request = pb.ResetRequest(
             protocol_version=PROTOCOL_VERSION,
             request_id=request_id,
@@ -221,7 +191,6 @@ class BenchmarkConnection:
             raise ProtocolStateError("reset completed without readiness and initial observation")
         self.current_episode_id = episode_id
         self._episode_active = True
-        self._episode_count += 1
         self.client_tick = observation.client_tick
         self.server_tick = observation.server_tick
         return observation
@@ -271,190 +240,6 @@ class BenchmarkConnection:
                 continue
             else:
                 raise ProtocolStateError(f"unexpected {case or 'empty'} message while stepping")
-
-    def finalize_recordings(
-        self,
-        request_id: int,
-        *,
-        interrupted: bool,
-        timeout: float,
-        artifact_handler: ArtifactHandler,
-    ) -> RecordingBatch:
-        if self._closed:
-            raise InfrastructureError("cannot finalize recordings on a closed connection")
-        if self._finalized:
-            raise ProtocolStateError("command recordings were already finalized")
-        if request_id <= 0:
-            raise ValueError("finalization request id must be positive")
-        if timeout <= 0 or timeout > 2**32 - 1:
-            raise ValueError("recording finalization timeout is outside the supported range")
-        transfer_timeout_seconds = max(1, min(2**32 - 1, round(timeout)))
-        request = pb.CommandFinalize(
-            protocol_version=PROTOCOL_VERSION,
-            request_id=request_id,
-            session_id=self.session_id,
-            active_episode_id=self.current_episode_id if self._episode_active else 0,
-            reason="trainer command interrupted" if interrupted else "trainer command complete",
-            interrupted=interrupted,
-            transfer_timeout_seconds=transfer_timeout_seconds,
-        )
-        self._transport.send(
-            pb.WireMessage(protocol_version=PROTOCOL_VERSION, command_finalize=request)
-        )
-        self._finalized = True
-        prior_timeout = self._set_transport_timeout(timeout)
-        last_ordinal = -1
-        offered_count = 0
-        positive_acknowledgements = 0
-        try:
-            while True:
-                message = self._receive()
-                case = message.WhichOneof("payload")
-                if case == "episode_artifact":
-                    artifact = self._artifact_from_proto(
-                        message.episode_artifact, request_id, last_ordinal
-                    )
-                    try:
-                        retained, detail = artifact_handler(artifact)
-                    except Exception as exception:
-                        retained = False
-                        detail = str(exception) or exception.__class__.__name__
-                    if not retained and not detail:
-                        detail = "trainer retention failed without a diagnostic"
-                    acknowledgement = pb.RetentionAcknowledgement(
-                        protocol_version=PROTOCOL_VERSION,
-                        request_id=request_id,
-                        session_id=self.session_id,
-                        ordinal=artifact.ordinal,
-                        episode_id=artifact.episode_id,
-                        sha256=artifact.sha256,
-                        retained=retained,
-                        detail=detail,
-                    )
-                    self._transport.send(
-                        pb.WireMessage(
-                            protocol_version=PROTOCOL_VERSION,
-                            retention_acknowledgement=acknowledgement,
-                        )
-                    )
-                    positive_acknowledgements += int(retained)
-                    last_ordinal = artifact.ordinal
-                    offered_count += 1
-                    continue
-                if case == "batch_complete":
-                    batch = self._batch_from_proto(message.batch_complete, request_id)
-                    if batch.offered_artifacts != offered_count:
-                        raise ProtocolStateError(
-                            "recording batch offered count does not match streamed artifacts"
-                        )
-                    if batch.retained_artifacts != positive_acknowledgements:
-                        raise ProtocolStateError(
-                            "recording batch retained count does not match acknowledgements"
-                        )
-                    if batch.expected_artifacts != self._episode_count:
-                        raise ProtocolStateError(
-                            "recording batch expected count does not match command resets"
-                        )
-                    return batch
-                if case in {
-                    "connection_hello",
-                    "connection_ready",
-                    "episode_ready",
-                    "action_applied",
-                    "observation",
-                }:
-                    self._validate_drained_data_plane_message(message, case)
-                    continue
-                raise ProtocolStateError(
-                    f"unexpected {case or 'empty'} message while finalizing recordings"
-                )
-        finally:
-            self._set_transport_timeout(prior_timeout)
-
-    def _set_transport_timeout(self, timeout: float | None) -> float | None:
-        setter = getattr(self._transport, "set_timeout", None)
-        if setter is None:
-            return None
-        previous: float | None = setter(timeout)
-        return previous
-
-    def _validate_drained_data_plane_message(self, message: Any, case: str) -> None:
-        """Validate and discard data sent before Fabric handled CommandFinalize."""
-
-        payload = getattr(message, case)
-        self._require_version(payload.protocol_version, f"drained {case.replace('_', ' ')}")
-        if payload.session_id != self.session_id:
-            raise ProtocolStateError(
-                f"drained {case.replace('_', ' ')} does not belong to the command session"
-            )
-        episode_id = getattr(payload, "episode_id", 0)
-        if episode_id and episode_id != self.current_episode_id:
-            raise ProtocolStateError(
-                f"drained {case.replace('_', ' ')} does not belong to the active episode"
-            )
-
-    def _artifact_from_proto(
-        self, artifact: Any, request_id: int, after_ordinal: int
-    ) -> RecordingArtifact:
-        self._require_version(artifact.protocol_version, "episode artifact")
-        status = int(artifact.recording_status)
-        reason = int(artifact.terminal_reason)
-        complete_reasons = {
-            pb.TERMINAL_REASON_SUCCESS,
-            pb.TERMINAL_REASON_MISSED_JUMP,
-            pb.TERMINAL_REASON_TIME_LIMIT,
-        }
-        valid_status = (
-            status == pb.EPISODE_RECORDING_STATUS_COMPLETE and reason in complete_reasons
-        ) or (
-            status == pb.EPISODE_RECORDING_STATUS_PARTIAL
-            and reason == pb.TERMINAL_REASON_INFRASTRUCTURE_ERROR
-        )
-        if (
-            artifact.request_id != request_id
-            or artifact.session_id != self.session_id
-            or artifact.ordinal <= after_ordinal
-            or artifact.ordinal >= self._episode_count
-            or artifact.episode_id <= 0
-            or not valid_status
-            or not artifact.staging_path
-            or artifact.size_bytes <= 0
-            or len(artifact.sha256) != 32
-        ):
-            raise ProtocolStateError("episode artifact violates recording batch invariants")
-        return RecordingArtifact(
-            request_id=int(artifact.request_id),
-            session_id=str(artifact.session_id),
-            ordinal=int(artifact.ordinal),
-            episode_id=int(artifact.episode_id),
-            seed=int(artifact.seed),
-            recording_status=status,
-            terminal_reason=reason,
-            staging_path=Path(artifact.staging_path),
-            sha256=bytes(artifact.sha256),
-            size_bytes=int(artifact.size_bytes),
-        )
-
-    def _batch_from_proto(self, completed: Any, request_id: int) -> RecordingBatch:
-        self._require_version(completed.protocol_version, "recording batch completion")
-        if (
-            completed.request_id != request_id
-            or completed.session_id != self.session_id
-            or completed.offered_artifacts > completed.expected_artifacts
-            or completed.retained_artifacts > completed.offered_artifacts
-            or not completed.reconnecting_minecraft
-        ):
-            raise ProtocolStateError("recording batch completion violates invariants")
-        return RecordingBatch(
-            request_id=int(completed.request_id),
-            session_id=str(completed.session_id),
-            expected_artifacts=int(completed.expected_artifacts),
-            offered_artifacts=int(completed.offered_artifacts),
-            retained_artifacts=int(completed.retained_artifacts),
-            preserved_artifacts=int(completed.preserved_artifacts),
-            warnings=tuple(str(warning) for warning in completed.warnings),
-            reconnecting_minecraft=bool(completed.reconnecting_minecraft),
-        )
 
     def _receive(self) -> Any:
         message = self._transport.receive()

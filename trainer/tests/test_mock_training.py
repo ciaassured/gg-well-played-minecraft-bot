@@ -129,11 +129,7 @@ class _ChunkedModel:
 
 class _TrainingEnvironment:
     def __init__(self) -> None:
-        self.recording_contexts: list[dict[str, Any]] = []
         self.closed = False
-
-    def set_recording_context(self, **context: Any) -> None:
-        self.recording_contexts.append(context)
 
     def _preserve_seed_stream(self):
         return nullcontext()

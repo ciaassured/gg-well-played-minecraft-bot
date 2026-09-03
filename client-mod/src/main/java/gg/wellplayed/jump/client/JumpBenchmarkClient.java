@@ -1,40 +1,31 @@
 package gg.wellplayed.jump.client;
 
-import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import gg.wellplayed.jump.client.core.ClientConfiguration;
 import gg.wellplayed.jump.client.core.ControlledInputs;
-import gg.wellplayed.jump.client.core.EpisodeRecordingCoordinator;
 import gg.wellplayed.jump.client.core.EpisodeSequencer;
-import gg.wellplayed.jump.client.core.ExpectedDisconnects;
 import gg.wellplayed.jump.client.core.FramedProtobuf;
 import gg.wellplayed.jump.client.core.LoopbackServer;
 import gg.wellplayed.jump.client.core.ObservationMath;
 import gg.wellplayed.jump.client.core.ProtocolViolation;
-import gg.wellplayed.jump.client.core.ReplayModStatus;
+import gg.wellplayed.jump.client.core.ReadinessFile;
+import gg.wellplayed.jump.client.core.ReconnectBackoff;
 import gg.wellplayed.jump.protocol.v1.Action;
 import gg.wellplayed.jump.protocol.v1.ActionApplied;
 import gg.wellplayed.jump.protocol.v1.ActionRequest;
-import gg.wellplayed.jump.protocol.v1.BatchComplete;
-import gg.wellplayed.jump.protocol.v1.CommandFinalize;
 import gg.wellplayed.jump.protocol.v1.ConnectionHello;
 import gg.wellplayed.jump.protocol.v1.ConnectionReady;
-import gg.wellplayed.jump.protocol.v1.EpisodeArtifact;
 import gg.wellplayed.jump.protocol.v1.EpisodePhase;
 import gg.wellplayed.jump.protocol.v1.EpisodeReady;
 import gg.wellplayed.jump.protocol.v1.EpisodeState;
 import gg.wellplayed.jump.protocol.v1.ErrorCode;
 import gg.wellplayed.jump.protocol.v1.Observation;
 import gg.wellplayed.jump.protocol.v1.ProtocolError;
+import gg.wellplayed.jump.protocol.v1.Shutdown;
 import gg.wellplayed.jump.protocol.v1.TerminalReason;
 import gg.wellplayed.jump.protocol.v1.WireMessage;
 import java.io.IOException;
-import java.nio.file.Path;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -46,48 +37,43 @@ import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Fabric entry point for the tick-synchronous trainer bridge and episode recorder. */
+/** Fabric entry point for one persistent tick-synchronous trainer bridge. */
 public final class JumpBenchmarkClient implements ClientModInitializer {
   private static final Logger LOGGER = LoggerFactory.getLogger("jump-benchmark-client");
-  private static final int PROTOCOL_VERSION = 2;
-  private static final int DEFAULT_PORT = 64123;
-  private static final long DEFAULT_FINALIZATION_TIMEOUT_MILLIS = 300_000L;
-  private static final long FINALIZATION_TIMEOUT_MILLIS =
-      Long.getLong("jump.client.finalizationTimeoutMillis", DEFAULT_FINALIZATION_TIMEOUT_MILLIS);
-  private static final long FINALIZATION_POLL_MILLIS = 100L;
+  private static final int PROTOCOL_VERSION = 3;
+  private static final int CONNECT_ATTEMPT_TIMEOUT_TICKS = 600;
 
+  private final ClientConfiguration configuration = ClientConfiguration.fromSystemProperties();
   private final EpisodeSequencer sequencer = new EpisodeSequencer();
   private final ControlledInputs inputs = new ControlledInputs();
-  private final ExpectedDisconnects expectedTrainerDisconnects = new ExpectedDisconnects();
-  private final EpisodeRecordingCoordinator recordings =
-      new EpisodeRecordingCoordinator(configuredReplayDirectory());
+  private final ReadinessFile readiness = new ReadinessFile(configuration.readinessFile());
+  private final ReconnectBackoff reconnectBackoff = new ReconnectBackoff(20, 600);
   private final LoopbackServer trainer =
       new LoopbackServer(
-          Integer.getInteger("jump.client.port", DEFAULT_PORT), new TrainerListener());
+          configuration.trainerBindAddress(), configuration.trainerPort(), new TrainerListener());
 
   private long clientTick;
   private long lastCompletedClientTick;
   private long actionAppliedClientTick;
   private long lastHelloAttemptTick;
   private long lastStabilityLogTick;
+  private long nextConnectTick;
+  private long connectRequestTick;
   private ConnectionHello hello;
   private ConnectionReady connectionReady;
   private WireMessage pendingPaperAction;
   private boolean jumpPressedThisTick;
   private boolean minecraftConnectRequested;
-  private boolean replayStartupCallbackRegistered;
-  private boolean replayStartupComplete;
-  private boolean recordingSessionInitialized;
-  private volatile boolean finalizerRunning;
+  private int reconnectAttempt;
 
   @Override
   public void onInitializeClient() {
+    readiness.remove();
     PayloadTypeRegistry.serverboundPlay().register(BenchmarkPayload.TYPE, BenchmarkPayload.CODEC);
     PayloadTypeRegistry.clientboundPlay().register(BenchmarkPayload.TYPE, BenchmarkPayload.CODEC);
     ClientPlayNetworking.registerGlobalReceiver(
@@ -100,22 +86,21 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     try {
       trainer.start();
     } catch (IOException exception) {
-      throw new IllegalStateException("cannot listen for trainer on loopback", exception);
+      throw new IllegalStateException("cannot bind the trainer listener", exception);
     }
     LOGGER.info(
-        "Jump benchmark client ready on 127.0.0.1:{}; waiting for Replay Mod startup",
-        DEFAULT_PORT);
+        "Trainer listener bound to {}:{}; waiting for Paper protocol acknowledgement",
+        configuration.trainerBindAddress(),
+        configuration.trainerPort());
     if (Boolean.getBoolean("jump.client.offline")) {
-      LOGGER.info(
-          "Offline authentication is intentional; authenticated profile-key retrieval is disabled"
-              + " and Realms authorization errors are non-fatal");
+      LOGGER.info("Offline authentication is intentional for the isolated benchmark server");
     }
   }
 
   private void joinedPaper(Minecraft client) {
+    readiness.remove();
     releaseAll(client);
     minecraftConnectRequested = true;
-    recordingSessionInitialized = false;
     String sessionId = UUID.randomUUID().toString();
     sequencer.startSession(sessionId);
     hello =
@@ -126,42 +111,32 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
             .setClientTick(clientTick)
             .build();
     connectionReady = null;
-    WireMessage message = envelope().setConnectionHello(hello).build();
     lastHelloAttemptTick = clientTick;
     LOGGER.info(
         "Joined Paper; jump:control sendable={}",
         ClientPlayNetworking.canSend(BenchmarkPayload.TYPE));
-    sendPaper(client, message);
-    initializeRecordingSessionIfReady(client);
+    sendPaper(client, envelope().setConnectionHello(hello).build());
   }
 
   private void disconnectedPaper(Minecraft client) {
+    readiness.remove();
     releaseAll(client);
     sequencer.abort();
     minecraftConnectRequested = false;
-    recordingSessionInitialized = false;
-    if (recordings.finalizing()) {
-      hello = null;
-      connectionReady = null;
-      finalizeReplayAsync(client);
-      return;
-    }
-
     sendError(
         client,
         ErrorCode.ERROR_CODE_INTERNAL,
         "Minecraft disconnected from the benchmark server",
         true);
-    beginUnexpectedFinalization();
     hello = null;
     connectionReady = null;
-    finalizeReplayAsync(client);
+    scheduleReconnect("Paper disconnected");
   }
 
   private void receiveTrainer(WireMessage message, Minecraft client) {
     if (message.getProtocolVersion() != PROTOCOL_VERSION) {
       sendError(
-          client, ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 2", false);
+          client, ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 3", false);
       return;
     }
     try {
@@ -169,19 +144,10 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
         case RESET_REQUEST -> {
           releaseAll(client);
           sequencer.beginReset(message.getResetRequest());
-          recordEpisodeStart(message.getResetRequest());
           sendPaper(client, message);
         }
         case ACTION_REQUEST -> sequencer.queueAction(message.getActionRequest());
-        case COMMAND_FINALIZE -> beginCommandFinalization(message.getCommandFinalize(), client);
-        case RETENTION_ACKNOWLEDGEMENT ->
-            recordings.acknowledge(message.getRetentionAcknowledgement());
-        case SHUTDOWN -> {
-          interruptRecording();
-          releaseAll(client);
-          sequencer.abort();
-          sendPaper(client, message);
-        }
+        case SHUTDOWN -> abortActiveEpisode(client, message.getShutdown().getReason());
         default ->
             throw new ProtocolViolation(
                 ErrorCode.ERROR_CODE_INVALID_MESSAGE, "payload is not valid from Python to Fabric");
@@ -192,46 +158,20 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     }
   }
 
-  private void beginCommandFinalization(CommandFinalize request, Minecraft client)
-      throws ProtocolViolation {
-    if (client.getConnection() == null) {
-      throw new ProtocolViolation(
-          ErrorCode.ERROR_CODE_INTERNAL,
-          "cannot finalize recordings while Minecraft is disconnected");
-    }
-    try {
-      recordings.beginFinalization(request, ReplayModStatus.markerWriter());
-    } catch (IOException exception) {
-      recordingWarning("could not write the final episode split markers", exception);
-      recordings.beginFinalizationBestEffort(request);
-    }
-    releaseAll(client);
-    sequencer.abort();
-    LOGGER.info(
-        "Disconnecting from Paper to finalize Replay Mod recordings: {}", request.getReason());
-    client.getConnection().getConnection().disconnect(Component.literal(request.getReason()));
-  }
-
   private void receivePaper(byte[] data, Minecraft client) {
     if (data.length == 0 || data.length > FramedProtobuf.MAX_MESSAGE_BYTES) {
-      releaseAll(client);
-      interruptRecording();
-      sendError(client, ErrorCode.ERROR_CODE_INVALID_MESSAGE, "invalid Paper payload size", false);
+      paperProtocolFailure(client, "invalid Paper payload size");
       return;
     }
     final WireMessage message;
     try {
       message = WireMessage.parseFrom(data);
     } catch (InvalidProtocolBufferException exception) {
-      releaseAll(client);
-      interruptRecording();
-      sendError(client, ErrorCode.ERROR_CODE_INVALID_MESSAGE, "Paper sent invalid protobuf", false);
+      paperProtocolFailure(client, "Paper sent invalid protobuf");
       return;
     }
     if (message.getProtocolVersion() != PROTOCOL_VERSION) {
-      releaseAll(client);
-      interruptRecording();
-      sendError(client, ErrorCode.ERROR_CODE_VERSION_MISMATCH, "Paper protocol mismatch", false);
+      paperProtocolFailure(client, "Paper protocol mismatch");
       return;
     }
     try {
@@ -245,6 +185,13 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
                 "Paper connection acknowledgement does not match");
           }
           connectionReady = ready;
+          reconnectAttempt = 0;
+          readiness.markReady(
+              "protocol=3\nsession="
+                  + ready.getSessionId()
+                  + "\nserver="
+                  + configuration.paperAddress()
+                  + "\n");
           sendHandshakeIfReady(client);
         }
         case EPISODE_READY -> {
@@ -264,13 +211,12 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
         }
         case ERROR -> {
           releaseAll(client);
-          interruptRecording();
           sendTrainerIfConnected(message, client);
         }
         case SHUTDOWN -> {
           releaseAll(client);
-          interruptRecording();
           sequencer.abort();
+          readiness.remove();
           sendTrainerIfConnected(message, client);
         }
         default ->
@@ -279,35 +225,25 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
       }
     } catch (ProtocolViolation exception) {
       releaseAll(client);
-      interruptRecording();
       sendError(client, exception.code(), exception.getMessage(), false);
     }
   }
 
   private void startTick(Minecraft client) {
     clientTick++;
-    // A headless benchmark has no physical mouse or keyboard input. Keep the
-    // vanilla inactivity tracker active so it does not silently cap the client
-    // at 10 FPS after ten minutes and starve tick/network task processing.
     client.getFramerateLimitTracker().onInputReceived();
-    if (!replayStartupCallbackRegistered) {
-      replayStartupCallbackRegistered =
-          ReplayModStatus.runAfterStartup(
-              () ->
-                  client.execute(
-                      () -> {
-                        replayStartupComplete = true;
-                        LOGGER.info("Replay Mod post-startup work is complete");
-                      }));
-    }
-    if (replayStartupComplete
-        && !minecraftConnectRequested
+    if (minecraftConnectRequested
         && client.getConnection() == null
-        && !finalizerRunning
-        && !recordings.finalizing()) {
+        && hello == null
+        && clientTick - connectRequestTick >= CONNECT_ATTEMPT_TIMEOUT_TICKS) {
+      minecraftConnectRequested = false;
+      scheduleReconnect("Paper connection attempt timed out");
+    }
+    if (!minecraftConnectRequested
+        && client.getConnection() == null
+        && clientTick >= nextConnectTick) {
       connectMinecraft(client);
     }
-    initializeRecordingSessionIfReady(client);
 
     inputs.finishTick();
     syncInputs(client);
@@ -323,7 +259,6 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     }
     if (sequencer.actionTimedOut(clientTick)) {
       releaseAll(client);
-      interruptRecording();
       sequencer.abort();
       sendError(
           client, ErrorCode.ERROR_CODE_ACTION_TIMEOUT, "trainer missed action deadline", true);
@@ -336,7 +271,6 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     }
     if (client.player == null || connectionReady == null) {
       releaseAll(client);
-      interruptRecording();
       sequencer.abort();
       sendError(
           client, ErrorCode.ERROR_CODE_INTERNAL, "cannot apply action while disconnected", true);
@@ -358,9 +292,9 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
             .setActionSequence(action.getActionSequence())
             .setRequestedAction(action.getAction())
             .build();
-    WireMessage envelope = envelope().setActionApplied(applied).build();
-    pendingPaperAction = envelope;
-    sendTrainerIfConnected(envelope, client);
+    WireMessage completedAction = envelope().setActionApplied(applied).build();
+    pendingPaperAction = completedAction;
+    sendTrainerIfConnected(completedAction, client);
   }
 
   private void endTick(Minecraft client) {
@@ -413,7 +347,6 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
       }
       return;
     }
-
     emitObservationIfActionTickComplete(client);
   }
 
@@ -433,7 +366,6 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     EpisodeReady ready = sequencer.ready();
     if (client.player == null || ready == null) {
       releaseAll(client);
-      interruptRecording();
       sendError(client, ErrorCode.ERROR_CODE_INTERNAL, "observation state is unavailable", true);
       return;
     }
@@ -457,11 +389,6 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
             .setElapsedTicks(state.getElapsedTicks())
             .build();
     sendTrainerIfConnected(envelope().setObservation(observation).build(), client);
-    if (state.getPhase() == EpisodePhase.EPISODE_PHASE_TERMINAL) {
-      recordEpisodeComplete(state.getEpisodeId(), state.getTerminalReason());
-    } else if (state.getPhase() == EpisodePhase.EPISODE_PHASE_ABORTED) {
-      interruptRecording();
-    }
   }
 
   private static ObservationMath.Sample sample(LocalPlayer player, EpisodeReady ready) {
@@ -483,277 +410,62 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
         ready.getStandingFeetY());
   }
 
-  private void initializeRecordingSessionIfReady(Minecraft client) {
-    if (recordingSessionInitialized
-        || hello == null
-        || client.getConnection() == null
-        || !ReplayModStatus.recording()) {
-      return;
-    }
-    try {
-      recordings.beginSession(hello.getSessionId(), ReplayModStatus.markerWriter());
-      LOGGER.info("Replay Mod is logically stopped and ready for episode markers");
-    } catch (IOException | ProtocolViolation exception) {
-      recordingWarning("could not initialize episode recording markers", exception);
-    }
-    recordingSessionInitialized = true;
-    sendHandshakeIfReady(client);
-  }
-
   private void sendHandshakeIfReady(Minecraft client) {
-    if (!recordingSessionInitialized || hello == null) {
+    if (hello == null || connectionReady == null) {
       return;
     }
     sendTrainerIfConnected(envelope().setConnectionHello(hello).build(), client);
-    if (connectionReady != null) {
-      sendTrainerIfConnected(envelope().setConnectionReady(connectionReady).build(), client);
-    }
+    sendTrainerIfConnected(envelope().setConnectionReady(connectionReady).build(), client);
   }
 
-  private void recordEpisodeStart(gg.wellplayed.jump.protocol.v1.ResetRequest request) {
-    try {
-      recordings.beginEpisode(request, ReplayModStatus.markerWriter());
-    } catch (IOException | ProtocolViolation exception) {
-      recordingWarning(
-          "could not begin replay markers for episode " + request.getEpisodeId(), exception);
-    }
-  }
-
-  private void recordEpisodeComplete(long episodeId, TerminalReason reason) {
-    try {
-      recordings.completeEpisode(episodeId, reason, ReplayModStatus.markerWriter());
-    } catch (IOException | ProtocolViolation exception) {
-      recordingWarning("could not close replay markers for episode " + episodeId, exception);
-    }
-  }
-
-  private void interruptRecording() {
-    try {
-      recordings.interruptActive(ReplayModStatus.markerWriter());
-    } catch (IOException | ProtocolViolation exception) {
-      recordingWarning("could not mark the active replay as partial", exception);
-    }
-  }
-
-  private void beginUnexpectedFinalization() {
-    try {
-      recordings.beginUnexpectedFinalization(ReplayModStatus.markerWriter());
-    } catch (IOException | ProtocolViolation exception) {
-      recordingWarning("could not close the interrupted recording batch", exception);
-      recordings.beginUnexpectedFinalizationBestEffort();
-    }
-  }
-
-  private void finalizeReplayAsync(Minecraft client) {
-    if (finalizerRunning) {
-      return;
-    }
-    finalizerRunning = true;
-    Thread.ofVirtual()
-        .name("jump-replay-finalizer")
-        .start(
-            () -> {
-              int expected = recordings.expectedArtifactCount();
-              int offered = 0;
-              int retained = 0;
-              int preserved = 0;
-              long timeoutMillis = recordings.transferTimeoutMillis(FINALIZATION_TIMEOUT_MILLIS);
-              long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
-              List<EpisodeRecordingCoordinator.Artifact> artifacts = List.of();
-              try {
-                artifacts = awaitFinalizedArtifacts(deadlineNanos);
-                Set<Integer> availableOrdinals = new HashSet<>();
-                for (EpisodeRecordingCoordinator.Artifact artifact : artifacts) {
-                  availableOrdinals.add(artifact.ordinal());
-                }
-                for (int ordinal = 0; ordinal < expected; ordinal++) {
-                  if (!availableOrdinals.contains(ordinal)) {
-                    preserved++;
-                    recordings.addWarning(
-                        "no finalized staging file was found for episode ordinal " + ordinal);
-                  }
-                }
-
-                for (EpisodeRecordingCoordinator.Artifact artifact : artifacts) {
-                  if (!trainer.connected()
-                      || recordings.finalizationRequestId() == 0
-                      || deadlineReached(deadlineNanos)) {
-                    preserved++;
-                    recordings.addWarning(
-                        "preserved episode "
-                            + artifact.episodeId()
-                            + " because no trainer acknowledgement was available before the "
-                            + "finalization deadline");
-                    continue;
-                  }
-                  recordings.beginOffer(artifact);
-                  if (!sendArtifact(artifact)) {
-                    recordings.abandonOutstanding(
-                        "preserved episode "
-                            + artifact.episodeId()
-                            + " after its offer could not be sent");
-                    preserved++;
-                    continue;
-                  }
-                  offered++;
-                  Optional<EpisodeRecordingCoordinator.Acknowledgement> acknowledgement =
-                      awaitAcknowledgement(deadlineNanos);
-                  if (acknowledgement.isEmpty()) {
-                    recordings.abandonOutstanding(
-                        "retention acknowledgement timed out for episode " + artifact.episodeId());
-                    preserved++;
-                    continue;
-                  }
-                  EpisodeRecordingCoordinator.Acknowledgement completed =
-                      acknowledgement.orElseThrow();
-                  if (!completed.retained()) {
-                    recordings.addWarning(
-                        "trainer did not retain episode "
-                            + artifact.episodeId()
-                            + ": "
-                            + completed.detail());
-                    preserved++;
-                    continue;
-                  }
-                  retained++;
-                  try {
-                    recordings.deleteRetainedArtifact(artifact);
-                  } catch (IOException exception) {
-                    preserved++;
-                    recordingWarning(
-                        "canonical copy was retained but its staging source could not be deleted",
-                        exception);
-                  }
-                }
-
-                if (retained == expected && preserved == 0) {
-                  try {
-                    recordings.deleteCurrentRawSources();
-                  } catch (IOException exception) {
-                    recordingWarning("could not delete Replay Mod raw staging sources", exception);
-                  }
-                }
-                sendBatchComplete(expected, offered, retained, preserved);
-              } catch (IOException | ProtocolViolation | RuntimeException exception) {
-                recordingWarning("recording batch finalization failed", exception);
-                preserved = Math.max(preserved, expected - retained);
-                sendBatchComplete(expected, offered, retained, preserved);
-              } finally {
-                recordings.completeFinalization();
-                client.execute(
-                    () -> {
-                      finalizerRunning = false;
-                      connectMinecraft(client);
-                    });
-              }
-            });
-  }
-
-  private List<EpisodeRecordingCoordinator.Artifact> awaitFinalizedArtifacts(long deadlineNanos)
-      throws IOException {
-    while (!deadlineReached(deadlineNanos)) {
-      if (!ReplayModStatus.recording()) {
-        Optional<List<EpisodeRecordingCoordinator.Artifact>> completed =
-            recordings.pollFinalizedArtifacts();
-        if (completed.isPresent()) {
-          return completed.orElseThrow();
-        }
+  private void abortActiveEpisode(Minecraft client, String reason) {
+    releaseAll(client);
+    EpisodeSequencer.Phase phase = sequencer.phase();
+    boolean active =
+        phase != EpisodeSequencer.Phase.IDLE
+            && phase != EpisodeSequencer.Phase.TERMINAL
+            && phase != EpisodeSequencer.Phase.ABORTED;
+    if (active && client.getConnection() != null && hello != null) {
+      Shutdown.Builder shutdown =
+          Shutdown.newBuilder()
+              .setProtocolVersion(PROTOCOL_VERSION)
+              .setRequestId(Math.max(1, clientTick))
+              .setSessionId(sequencer.sessionId())
+              .setReason(reason == null || reason.isBlank() ? "trainer disconnected" : reason);
+      if (sequencer.reset() != null) {
+        shutdown.setEpisodeId(sequencer.reset().getEpisodeId());
       }
-      try {
-        Thread.sleep(FINALIZATION_POLL_MILLIS);
-      } catch (InterruptedException exception) {
-        Thread.currentThread().interrupt();
-        throw new IOException("Replay Mod finalization was interrupted", exception);
-      }
+      sendPaper(client, envelope().setShutdown(shutdown).build());
     }
-    recordings.addWarning("Replay Mod finalization timed out before every episode was available");
-    return recordings.finalizedArtifactsAvailableAtTimeout();
-  }
-
-  private Optional<EpisodeRecordingCoordinator.Acknowledgement> awaitAcknowledgement(
-      long deadlineNanos) throws IOException {
-    while (!deadlineReached(deadlineNanos) && trainer.connected()) {
-      Optional<EpisodeRecordingCoordinator.Acknowledgement> acknowledgement =
-          recordings.takeAcknowledgement();
-      if (acknowledgement.isPresent()) {
-        return acknowledgement;
-      }
-      try {
-        Thread.sleep(50L);
-      } catch (InterruptedException exception) {
-        Thread.currentThread().interrupt();
-        throw new IOException("artifact acknowledgement wait was interrupted", exception);
-      }
+    if (active) {
+      sequencer.abort();
     }
-    return Optional.empty();
-  }
-
-  private static boolean deadlineReached(long deadlineNanos) {
-    return deadlineNanos - System.nanoTime() <= 0;
-  }
-
-  private boolean sendArtifact(EpisodeRecordingCoordinator.Artifact artifact) {
-    return trySendTrainer(
-        envelope()
-            .setEpisodeArtifact(
-                EpisodeArtifact.newBuilder()
-                    .setProtocolVersion(PROTOCOL_VERSION)
-                    .setRequestId(artifact.requestId())
-                    .setSessionId(artifact.sessionId())
-                    .setOrdinal(artifact.ordinal())
-                    .setEpisodeId(artifact.episodeId())
-                    .setSeed(artifact.seed())
-                    .setRecordingStatus(artifact.recordingStatus())
-                    .setTerminalReason(artifact.terminalReason())
-                    .setStagingPath(artifact.stagingPath().toString())
-                    .setSizeBytes(artifact.sizeBytes())
-                    .setSha256(ByteString.copyFrom(artifact.sha256())))
-            .build());
-  }
-
-  private boolean sendBatchComplete(int expected, int offered, int retained, int preserved) {
-    long requestId = recordings.finalizationRequestId();
-    long connectionId = trainer.connectionId();
-    if (requestId == 0 || connectionId == 0) {
-      return false;
-    }
-    expectedTrainerDisconnects.expect(connectionId);
-    boolean sent =
-        trySendTrainer(
-            connectionId,
-            envelope()
-                .setBatchComplete(
-                    BatchComplete.newBuilder()
-                        .setProtocolVersion(PROTOCOL_VERSION)
-                        .setRequestId(requestId)
-                        .setSessionId(recordings.sessionId())
-                        .setExpectedArtifacts(expected)
-                        .setOfferedArtifacts(offered)
-                        .setRetainedArtifacts(retained)
-                        .setPreservedArtifacts(preserved)
-                        .addAllWarnings(recordings.warnings())
-                        .setReconnectingMinecraft(true))
-                .build());
-    if (!sent) {
-      expectedTrainerDisconnects.cancel(connectionId);
-    }
-    return sent;
   }
 
   private void connectMinecraft(Minecraft client) {
-    if (!replayStartupComplete
-        || minecraftConnectRequested
-        || finalizerRunning
-        || recordings.finalizing()
-        || client.getConnection() != null) {
+    if (minecraftConnectRequested || client.getConnection() != null) {
       return;
     }
-    String address = System.getProperty("jump.client.server", "127.0.0.1:25565");
+    String address = configuration.paperAddress();
     ServerData server = new ServerData("Jump Benchmark", address, ServerData.Type.OTHER);
     minecraftConnectRequested = true;
-    LOGGER.info("Replay Mod is ready; connecting the persistent client to {}", address);
+    connectRequestTick = clientTick;
+    LOGGER.info("Connecting the persistent client to {}", address);
     ConnectScreen.startConnecting(
         new TitleScreen(), client, ServerAddress.parseString(address), server, true, null);
+  }
+
+  private void scheduleReconnect(String detail) {
+    long delay = reconnectBackoff.delayTicks(reconnectAttempt++);
+    nextConnectTick = clientTick + delay;
+    LOGGER.warn("{}; reconnecting in {} ticks", detail, delay);
+  }
+
+  private void paperProtocolFailure(Minecraft client, String detail) {
+    readiness.remove();
+    releaseAll(client);
+    sequencer.abort();
+    sendError(client, ErrorCode.ERROR_CODE_INVALID_MESSAGE, detail, false);
   }
 
   private void sendPaper(Minecraft client, WireMessage message) {
@@ -763,8 +475,8 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
       }
       ClientPlayNetworking.send(new BenchmarkPayload(message.toByteArray()));
     } catch (RuntimeException exception) {
+      readiness.remove();
       releaseAll(client);
-      interruptRecording();
       sequencer.abort();
       sendError(client, ErrorCode.ERROR_CODE_INTERNAL, exception.getMessage(), true);
     }
@@ -780,21 +492,6 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
       releaseAll(client);
       sequencer.abort();
       LOGGER.error("Trainer transport failed", exception);
-    }
-  }
-
-  private boolean trySendTrainer(WireMessage message) {
-    return trySendTrainer(trainer.connectionId(), message);
-  }
-
-  private boolean trySendTrainer(long connectionId, WireMessage message) {
-    try {
-      trainer.send(connectionId, message);
-      return true;
-    } catch (IOException exception) {
-      LOGGER.warn(
-          "Could not send recording lifecycle message to trainer: {}", exception.toString());
-      return false;
     }
   }
 
@@ -815,13 +512,6 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
           .setActionSequence(sequencer.actionSequence());
     }
     sendTrainerIfConnected(envelope().setError(error).build(), client);
-  }
-
-  private void recordingWarning(String description, Throwable failure) {
-    String detail =
-        failure.getMessage() == null ? description : description + ": " + failure.getMessage();
-    recordings.addWarning(detail);
-    LOGGER.warn(detail, failure);
   }
 
   private void releaseAll(Minecraft client) {
@@ -845,21 +535,15 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
     return WireMessage.newBuilder().setProtocolVersion(PROTOCOL_VERSION);
   }
 
-  private static Path configuredReplayDirectory() {
-    return Path.of(System.getProperty("jump.client.replayDir", "replay_recordings"));
-  }
-
   private final class TrainerListener implements LoopbackServer.Listener {
     @Override
     public void connected(long connectionId) {
       Minecraft.getInstance()
           .execute(
               () -> {
-                if (trainer.connectionId() != connectionId) {
-                  return;
+                if (trainer.connectionId() == connectionId) {
+                  sendHandshakeIfReady(Minecraft.getInstance());
                 }
-                Minecraft client = Minecraft.getInstance();
-                sendHandshakeIfReady(client);
               });
     }
 
@@ -876,26 +560,13 @@ public final class JumpBenchmarkClient implements ClientModInitializer {
 
     @Override
     public void disconnected(long connectionId, Throwable cause) {
-      boolean expected = connectionId > 0 && expectedTrainerDisconnects.consume(connectionId);
       Minecraft.getInstance()
           .execute(
               () -> {
-                if (expected) {
-                  LOGGER.info("Trainer command connection closed normally");
-                  return;
-                }
                 Minecraft client = Minecraft.getInstance();
-                releaseAll(client);
-                sequencer.abort();
-                if (!recordings.finalizing() && client.getConnection() != null) {
-                  beginUnexpectedFinalization();
-                  client
-                      .getConnection()
-                      .getConnection()
-                      .disconnect(Component.literal("trainer disconnected unexpectedly"));
-                }
+                abortActiveEpisode(client, "trainer disconnected");
                 if (cause == null) {
-                  LOGGER.warn("Trainer disconnected unexpectedly");
+                  LOGGER.info("Trainer disconnected; Minecraft remains connected");
                 } else {
                   LOGGER.warn("Trainer disconnected: {}", cause.toString());
                 }

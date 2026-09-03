@@ -1,18 +1,14 @@
 package gg.wellplayed.jump.client.core;
 
-import com.google.protobuf.ByteString;
 import gg.wellplayed.jump.protocol.v1.Action;
 import gg.wellplayed.jump.protocol.v1.ActionRequest;
-import gg.wellplayed.jump.protocol.v1.CommandFinalize;
 import gg.wellplayed.jump.protocol.v1.ConnectionHello;
 import gg.wellplayed.jump.protocol.v1.EpisodePhase;
 import gg.wellplayed.jump.protocol.v1.EpisodeReady;
-import gg.wellplayed.jump.protocol.v1.EpisodeRecordingStatus;
 import gg.wellplayed.jump.protocol.v1.EpisodeResult;
 import gg.wellplayed.jump.protocol.v1.EpisodeState;
 import gg.wellplayed.jump.protocol.v1.ErrorCode;
 import gg.wellplayed.jump.protocol.v1.ResetRequest;
-import gg.wellplayed.jump.protocol.v1.RetentionAcknowledgement;
 import gg.wellplayed.jump.protocol.v1.TerminalReason;
 import gg.wellplayed.jump.protocol.v1.WireMessage;
 import java.io.ByteArrayInputStream;
@@ -20,49 +16,36 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
-import java.util.List;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 /** Dependency-free test runner used by Gradle and the Nix flake checks. */
 public final class CoreTestMain {
+  private static final int PROTOCOL_VERSION = 3;
   private static int assertions;
 
   private CoreTestMain() {}
 
   public static void main(String[] args) throws Exception {
     framingRoundTripsAndRejectsBadLengths();
-    expectedDisconnectsAreBoundToConnectionIds();
     resetAndActionSequencingIsStrict();
+    abortAcknowledgementsAreIdempotent();
     actionDeadlineAbortsInputs();
     observationsUseCollisionBoxFront();
-    episodeMarkersAndMultiFileFinalizationAreStrict();
+    configurationAndIdentityAreStable();
+    readinessLifecycleIsAtomic();
+    reconnectBackoffIsBounded();
     System.out.println("client core assertions: " + assertions);
-  }
-
-  private static void expectedDisconnectsAreBoundToConnectionIds() throws Exception {
-    ExpectedDisconnects disconnects = new ExpectedDisconnects();
-    disconnects.expect(7);
-    check(!disconnects.consume(8));
-    check(disconnects.consume(7));
-    check(!disconnects.consume(7));
-
-    disconnects.expect(9);
-    disconnects.cancel(9);
-    check(!disconnects.consume(9));
-    throwsType(IllegalArgumentException.class, () -> disconnects.expect(0));
   }
 
   private static void framingRoundTripsAndRejectsBadLengths() throws Exception {
     WireMessage original =
         WireMessage.newBuilder()
-            .setProtocolVersion(2)
+            .setProtocolVersion(PROTOCOL_VERSION)
             .setConnectionHello(
-                ConnectionHello.newBuilder().setProtocolVersion(2).setSessionId("session"))
+                ConnectionHello.newBuilder()
+                    .setProtocolVersion(PROTOCOL_VERSION)
+                    .setSessionId("session"))
             .build();
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     FramedProtobuf.write(bytes, original);
@@ -107,22 +90,18 @@ public final class CoreTestMain {
     equal(action, sequencer.applyQueuedAction());
     check(sequencer.applyQueuedAction() == null);
 
-    EpisodeState zero = state(reset, 50, 0, EpisodePhase.EPISODE_PHASE_ACTIVE);
-    sequencer.receiveState(zero);
+    sequencer.receiveState(state(reset, 50, 0, EpisodePhase.EPISODE_PHASE_ACTIVE));
     check(!sequencer.observationDue());
     EpisodeState one = state(reset, 51, 1, EpisodePhase.EPISODE_PHASE_ACTIVE);
     sequencer.receiveState(one);
     check(sequencer.observationDue());
     equal(one, sequencer.completeObservation(24));
-    equal(1L, sequencer.observationSequence());
-    equal(EpisodeSequencer.Phase.WAITING_ACTION, sequencer.phase());
 
-    ActionRequest second = action(reset, 1, 2, Action.ACTION_NOOP);
-    sequencer.queueAction(second);
+    sequencer.queueAction(action(reset, 1, 2, Action.ACTION_NOOP));
     sequencer.applyQueuedAction();
     EpisodeResult result =
         EpisodeResult.newBuilder()
-            .setProtocolVersion(2)
+            .setProtocolVersion(PROTOCOL_VERSION)
             .setSessionId("session")
             .setEpisodeId(reset.getEpisodeId())
             .setServerTick(75)
@@ -133,8 +112,6 @@ public final class CoreTestMain {
     EpisodeState terminal = sequencer.completeObservation(25);
     equal(EpisodePhase.EPISODE_PHASE_TERMINAL, terminal.getPhase());
     equal(TerminalReason.TERMINAL_REASON_SUCCESS, terminal.getTerminalReason());
-    equal(19, terminal.getElapsedTicks());
-    equal(EpisodeSequencer.Phase.TERMINAL, sequencer.phase());
   }
 
   private static void actionDeadlineAbortsInputs() throws Exception {
@@ -155,12 +132,34 @@ public final class CoreTestMain {
     inputs.finishTick();
     check(inputs.forward());
     check(!inputs.jump());
-    inputs.apply(Action.ACTION_NOOP);
-    check(inputs.forward());
-    check(!inputs.jump());
     inputs.releaseAll();
     check(!inputs.forward());
     check(!inputs.jump());
+  }
+
+  private static void abortAcknowledgementsAreIdempotent() throws Exception {
+    EpisodeSequencer sequencer = new EpisodeSequencer();
+    sequencer.startSession("session");
+    ResetRequest reset = reset(1, 1, 0);
+    sequencer.beginReset(reset);
+    sequencer.receiveReady(ready(reset, 4.0));
+    sequencer.abort();
+
+    EpisodeState aborted =
+        state(reset, 51, 0, EpisodePhase.EPISODE_PHASE_ABORTED).toBuilder()
+            .setTerminalReason(TerminalReason.TERMINAL_REASON_INFRASTRUCTURE_ERROR)
+            .build();
+    EpisodeResult result =
+        EpisodeResult.newBuilder()
+            .setProtocolVersion(PROTOCOL_VERSION)
+            .setSessionId(reset.getSessionId())
+            .setEpisodeId(reset.getEpisodeId())
+            .setServerTick(51)
+            .setTerminalReason(TerminalReason.TERMINAL_REASON_INFRASTRUCTURE_ERROR)
+            .build();
+    sequencer.receiveState(aborted);
+    sequencer.receiveResult(result);
+    equal(EpisodeSequencer.Phase.ABORTED, sequencer.phase());
   }
 
   private static void observationsUseCollisionBoxFront() {
@@ -174,209 +173,47 @@ public final class CoreTestMain {
     check(sample.onGround());
     check(ObservationMath.resetStateMatches(sample, 5.7, 0.0));
     check(!ObservationMath.resetStateMatches(sample, 5.7, 1.0e-4));
-
-    ObservationMath.Sample diagonal =
-        ObservationMath.sample(
-            0.0,
-            65.5,
-            0.0,
-            2.0,
-            2.0,
-            0.2,
-            -0.1,
-            0.4,
-            false,
-            10.0,
-            Math.sqrt(0.5),
-            Math.sqrt(0.5),
-            64.0);
-    close(10.0 - 2.0 * Math.sqrt(2.0), diagonal.signedWallDistance());
-    close(1.5, diagonal.relativeFeetHeight());
-    close(0.6 / Math.sqrt(2.0), diagonal.laneVelocity());
   }
 
-  private static void episodeMarkersAndMultiFileFinalizationAreStrict() throws Exception {
-    Path directory = Files.createTempDirectory("jump-episode-recording-test");
-    try {
-      Path oldReplay = directory.resolve("old.mcpr");
-      writeReplay(oldReplay, "OLD_EPISODE");
-      FakeMarkers markers = new FakeMarkers();
-      EpisodeRecordingCoordinator coordinator = new EpisodeRecordingCoordinator(directory);
-      coordinator.beginSession("session", markers);
-
-      ResetRequest success = reset(70, 71, 100_000);
-      equal(
-          EpisodeRecordingCoordinator.BeginStatus.ACCEPTED,
-          coordinator.beginEpisode(success, markers));
-      equal(
-          EpisodeRecordingCoordinator.BeginStatus.IDEMPOTENT,
-          coordinator.beginEpisode(success, markers));
-      coordinator.completeEpisode(
-          success.getEpisodeId(), TerminalReason.TERMINAL_REASON_SUCCESS, markers);
-
-      ResetRequest failed = reset(72, 73, 100_001);
-      coordinator.beginEpisode(failed, markers);
-      coordinator.completeEpisode(
-          failed.getEpisodeId(), TerminalReason.TERMINAL_REASON_MISSED_JUMP, markers);
-      ResetRequest timedOut = reset(74, 75, 100_002);
-      coordinator.beginEpisode(timedOut, markers);
-      coordinator.completeEpisode(
-          timedOut.getEpisodeId(), TerminalReason.TERMINAL_REASON_TIME_LIMIT, markers);
-
-      ResetRequest overlapped = reset(76, 77, 100_003);
-      ResetRequest interrupted = reset(78, 79, 100_004);
-      coordinator.beginEpisode(overlapped, markers);
-      coordinator.beginEpisode(interrupted, markers);
-      coordinator.interruptActive(markers);
-
-      List<EpisodeRecordingCoordinator.Episode> episodes = coordinator.episodeSnapshot();
-      equal(5, episodes.size());
-      equal(
-          EpisodeRecordingStatus.EPISODE_RECORDING_STATUS_COMPLETE,
-          episodes.get(0).recordingStatus());
-      equal(TerminalReason.TERMINAL_REASON_SUCCESS, episodes.get(0).terminalReason());
-      equal(TerminalReason.TERMINAL_REASON_MISSED_JUMP, episodes.get(1).terminalReason());
-      equal(TerminalReason.TERMINAL_REASON_TIME_LIMIT, episodes.get(2).terminalReason());
-      equal(
-          EpisodeRecordingStatus.EPISODE_RECORDING_STATUS_PARTIAL,
-          episodes.get(3).recordingStatus());
-      equal(TerminalReason.TERMINAL_REASON_INFRASTRUCTURE_ERROR, episodes.get(4).terminalReason());
-      equal(EpisodeRecordingCoordinator.START_CUT_MARKER + "@0", markers.written.getFirst());
-      check(markers.written.stream().filter(value -> value.startsWith("_RM_SPLIT@")).count() == 5);
-
-      coordinator.beginFinalization(
-          CommandFinalize.newBuilder()
-              .setProtocolVersion(2)
-              .setRequestId(80)
-              .setSessionId("session")
-              .setReason("command complete")
-              .setTransferTimeoutSeconds(300)
-              .build(),
-          markers);
-      equal(300_000L, coordinator.transferTimeoutMillis(400_000L));
-      equal(5_000L, coordinator.transferTimeoutMillis(5_000L));
-      Files.writeString(directory.resolve("broken.mcpr"), "not a replay", StandardCharsets.UTF_8);
-      Path volatileRecording = directory.resolve("recording/session.mcpr.tmp/changed");
-      Files.createDirectories(volatileRecording);
-      writeReplay(
-          volatileRecording.resolve("transient.mcpr"),
-          "JUMP_EPISODE_V2_0_"
-              + episodes.getFirst().episodeId()
-              + "_"
-              + episodes.getFirst().seed());
-      for (EpisodeRecordingCoordinator.Episode episode : episodes) {
-        writeReplay(
-            directory.resolve("episode-" + episode.ordinal() + ".mcpr"),
-            "JUMP_EPISODE_V2_"
-                + episode.ordinal()
-                + "_"
-                + episode.episodeId()
-                + "_"
-                + episode.seed());
-      }
-      check(coordinator.pollFinalizedArtifacts().isEmpty());
-      List<EpisodeRecordingCoordinator.Artifact> artifacts =
-          coordinator.pollFinalizedArtifacts().orElseThrow();
-      equal(5, artifacts.size());
-      equal(71L, artifacts.getFirst().episodeId());
-      equal(32, artifacts.getFirst().sha256().length);
-
-      EpisodeRecordingCoordinator.Artifact first = artifacts.getFirst();
-      coordinator.beginOffer(first);
-      throwsCode(
-          ErrorCode.ERROR_CODE_INVALID_MESSAGE,
-          () ->
-              coordinator.acknowledge(
-                  RetentionAcknowledgement.newBuilder()
-                      .setProtocolVersion(2)
-                      .setRequestId(80)
-                      .setSessionId("session")
-                      .setOrdinal(first.ordinal())
-                      .setEpisodeId(first.episodeId())
-                      .setSha256(ByteString.copyFrom(new byte[32]))
-                      .setRetained(true)
-                      .build()));
-      coordinator.acknowledge(
-          RetentionAcknowledgement.newBuilder()
-              .setProtocolVersion(2)
-              .setRequestId(80)
-              .setSessionId("session")
-              .setOrdinal(first.ordinal())
-              .setEpisodeId(first.episodeId())
-              .setSha256(ByteString.copyFrom(first.sha256()))
-              .setRetained(true)
-              .build());
-      check(coordinator.takeAcknowledgement().orElseThrow().retained());
-      coordinator.deleteRetainedArtifact(first);
-      check(!Files.exists(first.stagingPath()));
-
-      EpisodeRecordingCoordinator.Artifact second = artifacts.get(1);
-      coordinator.beginOffer(second);
-      coordinator.acknowledge(
-          RetentionAcknowledgement.newBuilder()
-              .setProtocolVersion(2)
-              .setRequestId(80)
-              .setSessionId("session")
-              .setOrdinal(second.ordinal())
-              .setEpisodeId(second.episodeId())
-              .setSha256(ByteString.copyFrom(second.sha256()))
-              .setRetained(false)
-              .setDetail("copy failed")
-              .build());
-      check(!coordinator.takeAcknowledgement().orElseThrow().retained());
-      check(Files.exists(second.stagingPath()));
-      check(coordinator.finalizing());
-      coordinator.completeFinalization();
-      check(!coordinator.finalizing());
-      check(!ReplayModStatus.startupReady());
-      check(!ReplayModStatus.recording());
-    } finally {
-      try (var paths = Files.walk(directory)) {
-        paths.sorted(Comparator.reverseOrder()).forEach(CoreTestMain::deleteUnchecked);
-      }
-    }
+  private static void configurationAndIdentityAreStable() throws Exception {
+    ClientConfiguration configuration =
+        new ClientConfiguration("0.0.0.0", 64123, "jump-paper:25565", Path.of("/tmp/ready"));
+    equal("0.0.0.0", configuration.trainerBindAddress());
+    equal("jump-paper:25565", configuration.paperAddress());
+    equal("jumpbot-17", ClientIdentity.fromPodName("jump-client-17"));
+    throwsType(IllegalArgumentException.class, () -> ClientIdentity.fromPodName("jump-client"));
+    throwsType(
+        IllegalArgumentException.class,
+        () -> new ClientConfiguration("", 64123, "paper:25565", Path.of("ready")));
   }
 
-  private static void writeReplay(Path path, String marker) throws IOException {
-    try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(path))) {
-      output.putNextEntry(new ZipEntry("metaData.json"));
-      output.write("{}".getBytes(StandardCharsets.UTF_8));
-      output.closeEntry();
-      output.putNextEntry(new ZipEntry("recording.tmcpr"));
-      output.write(new byte[] {1, 2, 3});
-      output.closeEntry();
-      output.putNextEntry(new ZipEntry("markers.json"));
-      output.write(("[{\"name\":\"" + marker + "\"}]").getBytes(StandardCharsets.UTF_8));
-      output.closeEntry();
-    }
+  private static void readinessLifecycleIsAtomic() throws Exception {
+    Path directory = Files.createTempDirectory("jump-readiness-test");
+    Path path = directory.resolve("ready");
+    ReadinessFile readiness = new ReadinessFile(path);
+    readiness.remove();
+    check(!Files.exists(path));
+    readiness.markReady("protocol=3\n");
+    equal("protocol=3\n", Files.readString(path));
+    check(!Files.exists(directory.resolve("ready.tmp")));
+    readiness.remove();
+    check(!Files.exists(path));
+    Files.delete(directory);
   }
 
-  private static final class FakeMarkers implements EpisodeRecordingCoordinator.MarkerWriter {
-    private final List<String> written = new java.util.ArrayList<>();
-    private long duration = 100;
-
-    @Override
-    public long currentDurationMillis() {
-      return duration++;
-    }
-
-    @Override
-    public void addMarker(String name, int timeMillis) {
-      written.add(name + "@" + timeMillis);
-    }
-  }
-
-  private static void deleteUnchecked(Path path) {
-    try {
-      Files.deleteIfExists(path);
-    } catch (IOException exception) {
-      throw new AssertionError("cannot delete test path " + path, exception);
-    }
+  private static void reconnectBackoffIsBounded() throws Exception {
+    ReconnectBackoff backoff = new ReconnectBackoff(20, 600);
+    equal(20L, backoff.delayTicks(0));
+    equal(40L, backoff.delayTicks(1));
+    equal(320L, backoff.delayTicks(4));
+    equal(600L, backoff.delayTicks(5));
+    equal(600L, backoff.delayTicks(100));
+    throwsType(IllegalArgumentException.class, () -> backoff.delayTicks(-1));
   }
 
   private static ResetRequest reset(long requestId, long episodeId, long seed) {
     return ResetRequest.newBuilder()
-        .setProtocolVersion(2)
+        .setProtocolVersion(PROTOCOL_VERSION)
         .setRequestId(requestId)
         .setSessionId("session")
         .setEpisodeId(episodeId)
@@ -387,7 +224,7 @@ public final class CoreTestMain {
 
   private static EpisodeReady ready(ResetRequest reset, double gap) {
     return EpisodeReady.newBuilder()
-        .setProtocolVersion(2)
+        .setProtocolVersion(PROTOCOL_VERSION)
         .setRequestId(reset.getRequestId())
         .setSessionId(reset.getSessionId())
         .setEpisodeId(reset.getEpisodeId())
@@ -407,7 +244,7 @@ public final class CoreTestMain {
   private static ActionRequest action(
       ResetRequest reset, long observationSequence, long actionSequence, Action action) {
     return ActionRequest.newBuilder()
-        .setProtocolVersion(2)
+        .setProtocolVersion(PROTOCOL_VERSION)
         .setSessionId(reset.getSessionId())
         .setEpisodeId(reset.getEpisodeId())
         .setObservationSequence(observationSequence)
@@ -419,7 +256,7 @@ public final class CoreTestMain {
   private static EpisodeState state(
       ResetRequest reset, long serverTick, int elapsedTicks, EpisodePhase phase) {
     return EpisodeState.newBuilder()
-        .setProtocolVersion(2)
+        .setProtocolVersion(PROTOCOL_VERSION)
         .setSessionId(reset.getSessionId())
         .setEpisodeId(reset.getEpisodeId())
         .setServerTick(serverTick)

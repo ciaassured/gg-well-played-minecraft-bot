@@ -14,11 +14,11 @@
   decides success, missed-jump failure, and timeout.
 - `client-mod/` packages the Fabric bridge and isolated HeadlessMC clients. It
   relays reset/state messages, observes the local player, applies input, and
-  safely releases all controls. Its persistent client additionally owns Replay
-  Mod episode splitting and staging finalization.
+  safely releases all controls. Each persistent client owns one externally
+  configured trainer listener and Paper connection.
 - `trainer/` owns the Gymnasium environment, deterministic normalization and
   reward, seed partitions, baselines, SB3 DQN training, validation promotion,
-  final evaluation, saved-model inference, and recording retention. It never
+  final evaluation, saved-model inference, and run artifacts. It never
   starts Paper or Minecraft.
 - `replay-renderer/` validates retained `.mcpr` archives and drives Replay Mod's
   camera-path renderer under Xvfb and Mesa software OpenGL, then verifies the

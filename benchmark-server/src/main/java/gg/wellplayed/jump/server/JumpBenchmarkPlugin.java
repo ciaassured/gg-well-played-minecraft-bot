@@ -22,6 +22,7 @@ import gg.wellplayed.jump.server.core.EpisodeController.Phase;
 import gg.wellplayed.jump.server.core.EpisodeController.ResetCommand;
 import gg.wellplayed.jump.server.core.EpisodeController.ResetStatus;
 import gg.wellplayed.jump.server.core.EpisodeController.TickSnapshot;
+import gg.wellplayed.jump.server.core.LaneAllocator;
 import gg.wellplayed.jump.server.core.SeededGap;
 import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent;
 import java.util.HashMap;
@@ -51,13 +52,14 @@ import org.bukkit.plugin.messaging.PluginMessageListener;
 /** Paper entry point for the authoritative one-block jump benchmark. */
 public final class JumpBenchmarkPlugin extends JavaPlugin
     implements PluginMessageListener, Listener {
-  static final int PROTOCOL_VERSION = 2;
+  static final int PROTOCOL_VERSION = 3;
   static final int MAX_PAYLOAD_BYTES = 1024 * 1024;
   static final String CHANNEL = "jump:control";
 
   private final ArenaGeometry geometry = ArenaGeometry.STANDARD;
   private final ArenaManager arena = new ArenaManager(geometry);
   private final Map<UUID, PlayerSession> sessions = new HashMap<>();
+  private final LaneAllocator lanes = new LaneAllocator();
   private Location initialSpawn;
   private long serverTick;
 
@@ -68,13 +70,14 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
     getServer().getPluginManager().registerEvents(this, this);
     initialSpawn = arena.initialize(getServer().getWorlds().getFirst());
     getServer().getScheduler().runTaskTimer(this, this::tick, 1L, 1L);
-    getLogger().info("Jump benchmark enabled (protocol v2, Paper 26.2)");
+    getLogger().info("Jump benchmark enabled (protocol v3, Paper 26.2)");
   }
 
   @Override
   public void onDisable() {
     for (PlayerSession session : sessions.values()) {
       session.controller.abortInfrastructure();
+      lanes.release(session.laneOrdinal);
     }
     sessions.clear();
   }
@@ -104,7 +107,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
       return;
     }
     if (message.getProtocolVersion() != PROTOCOL_VERSION) {
-      sendError(player, null, ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 2");
+      sendError(player, null, ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 3");
       return;
     }
 
@@ -150,9 +153,11 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
     prior = sessions.remove(player.getUniqueId());
     if (prior != null) {
       prior.controller.abortInfrastructure();
+      releaseLane(prior);
     }
-    PlayerSession session = new PlayerSession(player, hello.getSessionId());
+    PlayerSession session = new PlayerSession(player, hello.getSessionId(), lanes.acquire());
     sessions.put(player.getUniqueId(), session);
+    isolatePlayer(player);
     sendConnectionReady(session, hello.getClientTick());
   }
 
@@ -215,7 +220,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
       case ACCEPTED -> {
         session.resetClientTick = request.getClientTick();
         session.cachedReady = null;
-        session.expectedSpawnX = arena.prepare(player, gap);
+        session.expectedSpawnX = arena.prepare(player, gap, session.laneOrdinal);
       }
       case IDEMPOTENT -> {
         if (session.cachedReady != null) {
@@ -293,7 +298,8 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
         continue;
       }
       if (session.controller.phase() == Phase.RESETTING) {
-        boolean stable = arena.isStable(session.player, session.expectedSpawnX);
+        boolean stable =
+            arena.isStable(session.player, session.expectedSpawnX, session.laneOrdinal);
         if (session.controller.observeResetStability(
             stable, arena.horizontalSpeedSquared(session.player))) {
           cacheReady(session);
@@ -328,8 +334,8 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
             .setStartingGap(command.startingGap())
             .setWallNearCoordinate(geometry.wallNear())
             .setWallFarCoordinate(geometry.wallFar())
-            .setWallMinCrossCoordinate(geometry.laneMinZ())
-            .setWallMaxCrossCoordinate(geometry.laneMaxZ() + 1.0)
+            .setWallMinCrossCoordinate(geometry.laneMinZ(session.laneOrdinal))
+            .setWallMaxCrossCoordinate(geometry.laneMaxZ(session.laneOrdinal) + 1.0)
             .setLaneDirectionX(1.0)
             .setLaneDirectionZ(0.0)
             .setStandingFeetY(geometry.standingFeetY())
@@ -448,6 +454,33 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
     return entity instanceof Player player && sessions.containsKey(player.getUniqueId());
   }
 
+  private void isolatePlayer(Player player) {
+    // Bukkit's hide API prevents benchmark clients from rendering one another. Paper's
+    // collidable flag independently prevents physical interference in the unlikely event that
+    // plugins or an operator teleport two players together.
+    player.setCollidable(false);
+    for (PlayerSession other : sessions.values()) {
+      if (other.player.equals(player)) {
+        continue;
+      }
+      player.hidePlayer(this, other.player);
+      other.player.hidePlayer(this, player);
+      other.player.setCollidable(false);
+    }
+  }
+
+  private void releaseLane(PlayerSession session) {
+    if (lanes.allocated(session.laneOrdinal)) {
+      lanes.release(session.laneOrdinal);
+    }
+    for (PlayerSession remaining : sessions.values()) {
+      if (!remaining.player.equals(session.player)) {
+        remaining.player.showPlayer(this, session.player);
+      }
+    }
+    session.player.setCollidable(true);
+  }
+
   @EventHandler
   public void onInitialSpawn(AsyncPlayerSpawnLocationEvent event) {
     Location spawn = initialSpawn;
@@ -515,6 +548,7 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
     PlayerSession session = sessions.remove(event.getPlayer().getUniqueId());
     if (session != null) {
       session.controller.abortInfrastructure();
+      releaseLane(session);
     }
   }
 
@@ -523,20 +557,23 @@ public final class JumpBenchmarkPlugin extends JavaPlugin
     PlayerSession session = sessions.remove(event.getPlayer().getUniqueId());
     if (session != null) {
       session.controller.abortInfrastructure();
+      releaseLane(session);
     }
   }
 
   private static final class PlayerSession {
     private final Player player;
     private final String sessionId;
+    private final int laneOrdinal;
     private final EpisodeController controller = new EpisodeController();
     private EpisodeReady cachedReady;
     private long resetClientTick;
     private double expectedSpawnX;
 
-    private PlayerSession(Player player, String sessionId) {
+    private PlayerSession(Player player, String sessionId, int laneOrdinal) {
       this.player = player;
       this.sessionId = sessionId;
+      this.laneOrdinal = laneOrdinal;
     }
 
     private long episodeId() {

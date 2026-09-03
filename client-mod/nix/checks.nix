@@ -7,6 +7,14 @@
     checks = {
       mod-build = clientArtifacts.clientMod;
 
+      container-entrypoint-smoke = pkgs.runCommand "jump-client-entrypoint-smoke" {} ''
+        output=$(JUMP_ENTRYPOINT_VALIDATE=1 POD_NAME=jump-client-117 \
+          ${clientArtifacts.containerEntrypoint}/bin/jump-client-container)
+        echo "$output" | grep -q 'username=jumpbot-117'
+        echo "$output" | grep -q 'bind=0.0.0.0:64123'
+        touch "$out"
+      '';
+
       core-tests =
         pkgs.runCommand "jump-client-core-tests" {
           nativeBuildInputs = [pkgs.jdk25_headless pkgs.protobuf];
@@ -61,16 +69,20 @@
         grep -q 'inactivityFpsLimit:minimized' ${./apps.nix}
         grep -q 'getFramerateLimitTracker().onInputReceived()' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'emitObservationIfActionTickComplete(client)' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
-        grep -q 'renameDialog.*false' ${./apps.nix}
-        grep -q 'jump.client.replayDir' ${./apps.nix}
-        grep -q 'ReplayModStatus.runAfterStartup' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
-        grep -q 'EpisodeArtifact.newBuilder()' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
-        grep -q 'BatchComplete.newBuilder()' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
-        grep -q 'deadlineReached(deadlineNanos)' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
+        grep -q 'jump.client.bind' ${./apps.nix}
+        grep -q 'jump.client.readinessFile' ${./apps.nix}
+        grep -q 'hmc.offline.username' ${./apps.nix}
+        grep -q 'JUMP_CLIENT_XMS' ${./apps.nix}
+        grep -q 'JUMP_CLIENT_XMX' ${./apps.nix}
+        grep -q 'readiness.markReady' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
+        grep -q 'scheduleReconnect("Paper disconnected")' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'connectMinecraft(client);' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
-        grep -q 'START_CUT_MARKER' ${../src/main/java/gg/wellplayed/jump/client/core/EpisodeRecordingCoordinator.java}
         grep -q 'runtime/client' ${./apps.nix}
-        grep -q 'replaymod.jar' ${./apps.nix}
+        if grep -qi 'replaymod\|episodeartifact\|commandfinalize' ${./apps.nix} \
+          ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}; then
+          echo "removed recording integration is still present" >&2
+          exit 1
+        fi
         if grep -q -- '--mode' ${./apps.nix}; then
           echo "unified launcher still accepts --mode" >&2
           exit 1

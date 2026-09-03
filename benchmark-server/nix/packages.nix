@@ -43,15 +43,88 @@
       cp ${plugin}/share/jump-benchmark-server/jump-benchmark-paper.jar \
         "$out/share/jump-benchmark-server/"
     '';
+    containerProperties = pkgs.writeText "jump-container-server.properties" ''
+      allow-flight=false
+      allow-nether=false
+      difficulty=peaceful
+      enable-command-block=false
+      enforce-secure-profile=false
+      force-gamemode=true
+      gamemode=adventure
+      generate-structures=false
+      generator-settings={"layers":[{"block":"minecraft:bedrock","height":1}],"biome":"minecraft:plains"}
+      level-name=jump-benchmark
+      level-type=minecraft:flat
+      max-players=@MAX_PLAYERS@
+      motd=One-block jump benchmark
+      online-mode=false
+      pause-when-empty-seconds=-1
+      player-idle-timeout=0
+      server-port=25565
+      simulation-distance=2
+      spawn-animals=false
+      spawn-monsters=false
+      spawn-npcs=false
+      spawn-protection=0
+      sync-chunk-writes=false
+      view-distance=2
+      white-list=false
+    '';
+    containerEntrypoint = pkgs.writeShellApplication {
+      name = "jump-server-container";
+      runtimeInputs = [pkgs.coreutils pkgs.gnused pkgs.jdk25_headless];
+      text = ''
+        runtime_dir="''${JUMP_BENCHMARK_SERVER_RUNTIME:-/data}"
+        client_count="''${JUMP_CLIENT_COUNT:-1}"
+        if [[ ! "$client_count" =~ ^[1-9][0-9]*$ ]]; then
+          echo "JUMP_CLIENT_COUNT must be a positive integer" >&2
+          exit 2
+        fi
+        if [[ "''${JUMP_ENTRYPOINT_VALIDATE:-0}" == 1 ]]; then
+          printf 'clients=%s heap=%s..%s runtime=%s\n' "$client_count" \
+            "''${JUMP_SERVER_XMS:-512m}" "''${JUMP_SERVER_XMX:-1g}" "$runtime_dir"
+          exit 0
+        fi
+        mkdir -p "$runtime_dir/plugins"
+        ln -sfn ${serverPackage}/share/jump-benchmark-server/paper-26.2-112.jar \
+          "$runtime_dir/paper.jar"
+        ln -sfn ${serverPackage}/share/jump-benchmark-server/jump-benchmark-paper.jar \
+          "$runtime_dir/plugins/jump-benchmark-paper.jar"
+        printf 'eula=true\n' > "$runtime_dir/eula.txt"
+        sed "s/@MAX_PLAYERS@/$client_count/" ${containerProperties} \
+          > "$runtime_dir/server.properties"
+        cd "$runtime_dir"
+        exec java -Xms"''${JUMP_SERVER_XMS:-512m}" -Xmx"''${JUMP_SERVER_XMX:-1g}" \
+          -jar paper.jar --nogui "$@"
+      '';
+    };
+    oci = pkgs.dockerTools.buildLayeredImage {
+      name = "ghcr.io/ciaassured/gg-well-played-minecraft-bot-server";
+      tag = "unstable";
+      maxLayers = 120;
+      contents = [containerEntrypoint pkgs.cacert];
+      config = {
+        Entrypoint = ["${containerEntrypoint}/bin/jump-server-container"];
+        WorkingDir = "/data";
+        Env = [
+          "JUMP_BENCHMARK_SERVER_RUNTIME=/data"
+          "JUMP_CLIENT_COUNT=1"
+          "JUMP_SERVER_XMS=512m"
+          "JUMP_SERVER_XMX=1g"
+        ];
+      };
+    };
   in {
     packages = {
       default = serverPackage;
       plugin = plugin;
       paper = paperServer;
+      oci = oci;
+      container = oci;
     };
 
     _module.args.serverArtifacts = {
-      inherit paperApi paperServer plugin protobufJava serverPackage;
+      inherit containerEntrypoint oci paperApi paperServer plugin protobufJava serverPackage;
     };
   };
 }

@@ -11,6 +11,7 @@ import java.util.Objects;
 
 /** Pure client-side reset, stability, action, and observation sequencer. */
 public final class EpisodeSequencer {
+  private static final int PROTOCOL_VERSION = 3;
   public static final int STABLE_TICKS_REQUIRED = 2;
   public static final int ACTION_DEADLINE_TICKS = 10;
 
@@ -176,6 +177,9 @@ public final class EpisodeSequencer {
       if (phase == Phase.TERMINAL && state.getPhase() == EpisodePhase.EPISODE_PHASE_TERMINAL) {
         return;
       }
+      if (phase == Phase.ABORTED && state.getPhase() == EpisodePhase.EPISODE_PHASE_ABORTED) {
+        return;
+      }
       throw violation(
           ErrorCode.ERROR_CODE_SEQUENCE_VIOLATION, "episode state has no applied action");
     }
@@ -193,9 +197,12 @@ public final class EpisodeSequencer {
     requireVersion(result.getProtocolVersion());
     requireSession(result.getSessionId());
     requireEpisode(result.getEpisodeId());
-    if (phase != Phase.ACTION_APPLIED && phase != Phase.TERMINAL) {
+    if (phase != Phase.ACTION_APPLIED && phase != Phase.TERMINAL && phase != Phase.ABORTED) {
       throw violation(
           ErrorCode.ERROR_CODE_SEQUENCE_VIOLATION, "episode result has no applied action");
+    }
+    if (phase == Phase.ABORTED) {
+      return;
     }
     serverResult = result;
   }
@@ -278,8 +285,9 @@ public final class EpisodeSequencer {
   }
 
   private void requireVersion(int version) throws ProtocolViolation {
-    if (version != 2) {
-      throw violation(ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version 2");
+    if (version != PROTOCOL_VERSION) {
+      throw violation(
+          ErrorCode.ERROR_CODE_VERSION_MISMATCH, "expected protocol version " + PROTOCOL_VERSION);
     }
   }
 

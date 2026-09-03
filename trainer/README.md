@@ -1,96 +1,44 @@
-# DQN trainer
+# Parallel DQN trainer
 
-This project owns seed selection, the loopback Protobuf client, Gymnasium reset
-and step semantics, reward and normalization, SB3 DQN training, checkpoint
-promotion, evaluation, and inference. It never starts Paper or Minecraft and it
-does not start Replay Mod or render video. Every command coordinates finalization
-with the persistent client, validates each Replay Mod archive and its reported
-size and digest, and atomically retains it before acknowledgement.
-
-The root README is the canonical startup and Nix orchestration guide. These are
-the trainer-specific entry points:
+The trainer owns Gymnasium semantics, deterministic normalization/reward,
+seed partitions, the fixed actor pool, batched inference, one spawned SB3 DQN
+learner, validation promotion, final evaluation, and checkpoint/metric
+artifacts. It never starts Paper or Minecraft and contains no recording code.
 
 ```console
 nix develop ./trainer
 nix build ./trainer
+nix build ./trainer#oci
 nix flake check ./trainer
 (cd trainer && nix fmt)
 nix run ./trainer#smoke
-nix run ./trainer#evaluate -- --checkpoint <checkpoint.zip> [--episodes 100] [--output <report.json>]
-nix run ./trainer#train -- --help
-nix run ./trainer#run -- --run <run-directory>
+nix run ./trainer#capacity -- --transitions 2000
+nix run ./trainer#train -- --timesteps 30000
+nix run ./trainer#pipeline -- --run-id <id> --timesteps 30000
 ```
 
-`smoke` must complete showcase seed `100000` with one deterministic near-wall
-JUMP request; a timeout, missed jump, or extra request makes the command fail.
+Every command accepts either repeatable `--endpoint HOST:PORT`, or
+`--endpoint-template ... --clients N`. `--host`/`--port` remain the local
+single-client fallback and cannot be mixed with pool options. Duplicate or
+invalid endpoints and nonpositive counts are rejected. Kubernetes sets the
+pool startup timeout to 900 seconds for first-time client downloads.
 
-Runs are written beneath `trainer/runs` by default. Each run contains its
-configuration, metrics, untrained/latest/best checkpoints, validation promotion
-history, and historical episode recordings beneath
-`replays/train-<UTC timestamp>/`. The `smoke`, `evaluate`, and `run` commands
-retain recordings beneath
-`trainer/recordings/<command>/<UTC timestamp>/`; set
-`JUMP_TRAINER_RECORDING_ROOT` to relocate that root. Each command directory has
-one manifest and sequential `<ordinal>-seed-<seed>.mcpr` files.
-Training uses consistent one-line `[train]` and `[evaluate]` records instead of
-SB3's box tables. It prints its run directory immediately, reports learning
-every 250 timesteps with recent episode metrics, and reports periodic
-**validation** progress every ten episodes with successes, elapsed time, and an
-ETA. `train` requires a positive `--timesteps` budget; 30000 is the recommended
-reference value. The seed and validation interval default to 20260823 and 5000,
-and `--validation-episodes` defaults to 20 with an accepted range of 1 through
-100. Each run selects that many seeds once from the start of the fixed
-`100000..100099` validation partition and reuses the same subset at step zero
-and every periodic validation. Chunk boundaries do not restart DQN exploration
-decay: its epsilon schedule spans the complete requested training budget.
-Both training and validation records include
-`client_ticks/action` and `server_ticks/action`; values near `1.00` confirm that
-the policy is receiving one decision opportunity per game tick. Checkpoint and
-promotion decisions use the same format. Validation compares each candidate to
-the best seen so far using the existing success, completion-time, and
-jump-request ordering; `checkpoints/best.zip` is therefore the best historical
-checkpoint, not necessarily the latest. Validation does not mutate the seed
-stream used by seedless training resets or feed episodes into learning. The
-public `evaluate --episodes` command has an independent episode count and seed
-partition, only measures a frozen checkpoint, and never participates in
-promotion. Low CPU utilization is normal because each action is synchronized
-to a real 20 TPS Minecraft client; the small DQN update is not the throughput
-bottleneck.
-Pressing Ctrl-C during learning saves the current in-memory model as
-`checkpoints/latest.zip`, writes `metrics/training-interrupted.json`, and exits
-without a traceback. A later `train` command always starts a new run; use
-`run` or `evaluate` to load a checkpoint from an interrupted run.
+One I/O actor thread owns each endpoint. The coordinator permits one in-flight
+transition per actor and batches all currently available observations. The
+spawned learner exclusively owns the SB3 model, replay buffer, optimizer,
+counters, and checkpoint writes. Its transition queue holds at most two
+batches; learner death, saturation, client loss, or policy lag over two action
+cycles fails the complete run.
 
-The trainer's canonical copy is published through a temporary destination only
-after ZIP, size, and SHA-256 validation. Failed transfers remove temporary
-destinations and leave client staging intact for recovery. Recording failures
-are warnings rather than ML failures. Ctrl-C preserves the trainer's exit
-status, marks an in-progress episode partial, and still requests command
-finalization. `JUMP_TRAINER_RECORDING_TIMEOUT` or `--recording-timeout` changes
-the default five-minute wait.
+Schedules use aggregate transitions regardless of client count: learning
+starts after 500 transitions, one gradient step occurs per four later
+transitions, the target updates every 1,000 transitions, and epsilon/checkpoint
+intervals use aggregate counts. Validation barriers stop actions, collect the
+in-flight pool width, drain the learner, and evaluate a frozen policy without
+changing replay state. Fixed validation/evaluation seeds are each assigned
+once and results are sorted by seed. Training streams are independently derived
+from `(run seed, client ordinal)`.
 
-`evaluate` defaults to 100 consecutive episodes on seeds `200000..200099` and
-accepts any positive `--episodes` count. Its concise terminal summary identifies
-the checkpoint and report, successes and success rate, terminal-reason counts,
-mean return, successful-episode completion ticks and jump requests, and client
-and server tick cadence. Metrics that require a successful episode are shown as
-`n/a` when there are no successes.
-
-The detailed JSON contains the resolved checkpoint path, inclusive seed range,
-the same aggregates (`success_rate` is a `0..1` fraction), and all per-episode
-metrics. A run-owned checkpoint writes by default to
-`<run>/metrics/performance-<checkpoint>-<N>-episodes.json`; an external
-checkpoint writes to
-`$JUMP_TRAINER_OUTPUT_ROOT/performance-<checkpoint>-<N>-episodes.json`
-(`trainer/evaluations/` under the Nix app). `--output` overrides the path, and
-repeating the same deterministic evaluation replaces the report. Recordings
-remain timestamped beneath
-`$JUMP_TRAINER_RECORDING_ROOT/evaluate/<UTC timestamp>/`. Completing the command
-always exits `0` regardless of performance; invalid arguments or infrastructure
-exit `2`, and Ctrl-C exits `130`.
-
-When migrating to YRush, replace these episode metrics and the current
-validation promotion ordering with authoritative YRush outcomes and suitable
-performance criteria. Retain the checkpoint-only, report-only public evaluator;
-do not introduce scripted YRush baselines or a binary gate without an external
-definition of “good.”
+`pipeline` trains and promotes with the established lexicographic ordering,
+then evaluates `best.zip` in the same process and Job. `capacity` exercises the
+same actor/inference coordinator with a scripted policy and no learning.

@@ -1,35 +1,23 @@
-# Protocol
+# Benchmark wire protocol
 
-This project owns the versioned Protobuf contract shared by the Paper plugin,
-Fabric client, and Python trainer. Generated Java and Python code is deliberately
-not committed: each consumer generates bindings from this directory during its
-own build.
+`proto/jump/v1/jump.proto` is the canonical, versioned contract. The package
+remains `jump.v1`, while the incompatible wire protocol is version 3. Paper,
+Fabric, and Python reject other protocol-version values.
 
-`jump/v1/jump.proto` defines connection setup, idempotent resets, authoritative
-episode state/results, sequenced observations and actions, errors, shutdown, and
-Replay Mod command-finalization and artifact-retention coordination. TCP
-messages use a four-byte unsigned
-big-endian length followed by one `WireMessage`; peers reject frames larger than
-1 MiB. Minecraft custom payloads contain the Protobuf bytes directly because
-Minecraft supplies packet framing.
+`WireMessage` is the only top-level message. TCP uses a four-byte unsigned
+big-endian length prefix; Minecraft uses custom-payload framing. Both reject
+messages larger than 1 MiB.
 
-Protocol v2 has one client lifecycle: connection messages contain no mode and
-the old capture messages are reserved. At trainer command end,
-`CommandFinalize` starts post-processing, `EpisodeArtifact` offers recordings
-sequentially, `RetentionAcknowledgement` confirms whether each staging source
-may be deleted, and `BatchComplete` reports warnings and reconnection. Each
-artifact identifies its episode, seed, ordinal, completeness, terminal reason,
-path, size, and SHA-256 digest.
-
-Commands:
+Protocol v3 contains connection, reset, state, action, observation, result,
+error, and shutdown messages only. Removed capture fields 21–23 and recording
+fields 24–27 are reserved by number and name so they cannot be reused.
 
 ```console
-nix develop ./protocol
 nix build ./protocol
 nix flake check ./protocol
-nix fmt ./protocol
-nix run ./protocol#validate
+(cd protocol && nix fmt)
 ```
 
-Consumers declare `path:../protocol` with `flake = false`; this project is never
-a runtime service.
+The build produces the schema and descriptor sets but runs no service.
+Consumers generate their own language bindings from this non-flake source
+input.
