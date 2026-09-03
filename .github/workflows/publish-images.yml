@@ -1,0 +1,78 @@
+name: Publish images
+
+on:
+  workflow_run:
+    workflows:
+      - Nix checks
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  publish-images:
+    name: Publish coordinated protocol-v3 images
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_REVISION: ${{ github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.IMAGE_REVISION }}
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Build all images before publishing any
+        run: |
+          nix build ./benchmark-server#oci --out-link result-server
+          nix build ./client-mod#oci --out-link result-client
+          nix build ./trainer#oci --out-link result-trainer
+
+      - name: Publish commit-tagged images to GHCR
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          declare -A images=(
+            [server]=gg-well-played-minecraft-bot-server
+            [client]=gg-well-played-minecraft-bot-client
+            [trainer]=gg-well-played-minecraft-bot-trainer
+          )
+          for component in server client trainer; do
+            nix shell nixpkgs#skopeo --command skopeo copy \
+              --dest-creds "$GHCR_USER:$GHCR_TOKEN" \
+              "docker-archive:result-$component" \
+              "docker://ghcr.io/ciaassured/${images[$component]}:$IMAGE_REVISION"
+          done
+
+      - name: Keep coordinated images public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for image in \
+            gg-well-played-minecraft-bot-server \
+            gg-well-played-minecraft-bot-client \
+            gg-well-played-minecraft-bot-trainer; do
+            for attempt in {1..12}; do
+              if gh api --method PATCH \
+                "/orgs/ciaassured/packages/container/$image" \
+                --field visibility=public; then
+                break
+              fi
+              if [[ "$attempt" == 12 ]]; then
+                exit 1
+              fi
+              sleep 5
+            done
+          done
