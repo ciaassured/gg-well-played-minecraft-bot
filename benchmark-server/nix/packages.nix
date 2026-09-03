@@ -81,12 +81,19 @@
       text = ''
         runtime_dir="''${JUMP_BENCHMARK_SERVER_RUNTIME:-/data}"
         client_count="''${JUMP_CLIENT_COUNT:-1}"
+        player_headroom="''${JUMP_SERVER_PLAYER_HEADROOM:-1}"
         if [[ ! "$client_count" =~ ^[1-9][0-9]*$ ]]; then
           echo "JUMP_CLIENT_COUNT must be a positive integer" >&2
           exit 2
         fi
+        if [[ ! "$player_headroom" =~ ^(0|[1-9][0-9]*)$ ]]; then
+          echo "JUMP_SERVER_PLAYER_HEADROOM must be a nonnegative integer" >&2
+          exit 2
+        fi
+        max_players=$((client_count + player_headroom))
         if [[ "''${JUMP_ENTRYPOINT_VALIDATE:-0}" == 1 ]]; then
-          printf 'clients=%s heap=%s..%s runtime=%s\n' "$client_count" \
+          printf 'clients=%s headroom=%s max-players=%s heap=%s..%s runtime=%s\n' \
+            "$client_count" "$player_headroom" "$max_players" \
             "''${JUMP_SERVER_XMS:-512m}" "''${JUMP_SERVER_XMX:-1g}" "$runtime_dir"
           exit 0
         fi
@@ -98,7 +105,7 @@
         ln -sfn ${serverPackage}/share/jump-benchmark-server/jump-benchmark-paper.jar \
           "$runtime_dir/plugins/jump-benchmark-paper.jar"
         printf 'eula=true\n' > "$runtime_dir/eula.txt"
-        sed "s/@MAX_PLAYERS@/$client_count/" ${containerProperties} \
+        sed "s/@MAX_PLAYERS@/$max_players/" ${containerProperties} \
           > "$runtime_dir/server.properties"
         cd "$runtime_dir"
         exec java -Xms"''${JUMP_SERVER_XMS:-512m}" -Xmx"''${JUMP_SERVER_XMX:-1g}" \
@@ -116,6 +123,7 @@
         Env = [
           "JUMP_BENCHMARK_SERVER_RUNTIME=/data"
           "JUMP_CLIENT_COUNT=1"
+          "JUMP_SERVER_PLAYER_HEADROOM=1"
           "JUMP_SERVER_XMS=512m"
           "JUMP_SERVER_XMX=1g"
         ];

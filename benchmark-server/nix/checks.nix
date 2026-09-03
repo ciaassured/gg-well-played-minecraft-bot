@@ -42,7 +42,25 @@
       container-entrypoint-smoke = pkgs.runCommand "jump-server-entrypoint-smoke" {} ''
         output=$(JUMP_ENTRYPOINT_VALIDATE=1 JUMP_CLIENT_COUNT=101 \
           ${serverArtifacts.containerEntrypoint}/bin/jump-server-container)
-        test "$output" = "clients=101 heap=512m..1g runtime=/data"
+        test "$output" = \
+          "clients=101 headroom=1 max-players=102 heap=512m..1g runtime=/data"
+
+        output=$(JUMP_ENTRYPOINT_VALIDATE=1 JUMP_CLIENT_COUNT=101 \
+          JUMP_SERVER_PLAYER_HEADROOM=100 \
+          ${serverArtifacts.containerEntrypoint}/bin/jump-server-container)
+        test "$output" = \
+          "clients=101 headroom=100 max-players=201 heap=512m..1g runtime=/data"
+
+        if JUMP_ENTRYPOINT_VALIDATE=1 JUMP_SERVER_PLAYER_HEADROOM=-1 \
+          ${serverArtifacts.containerEntrypoint}/bin/jump-server-container 2>/dev/null; then
+          echo "negative player headroom unexpectedly passed validation" >&2
+          exit 1
+        fi
+        if JUMP_ENTRYPOINT_VALIDATE=1 JUMP_SERVER_PLAYER_HEADROOM=invalid \
+          ${serverArtifacts.containerEntrypoint}/bin/jump-server-container 2>/dev/null; then
+          echo "non-integer player headroom unexpectedly passed validation" >&2
+          exit 1
+        fi
         touch "$out"
       '';
 

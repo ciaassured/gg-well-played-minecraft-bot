@@ -21,12 +21,14 @@ nix run ./benchmark-server#server
 ```
 
 Mutable state defaults to `benchmark-server/runtime`; set
-`JUMP_BENCHMARK_SERVER_RUNTIME` to relocate it. `JUMP_CLIENT_COUNT` generates
-Paper's `max-players` value at startup. `JUMP_SERVER_XMS` and
-`JUMP_SERVER_XMX` configure the JVM heap, with local defaults of `512m` and
-`1g`. Server simulation and view distances are both two chunks, which covers
-the fixed 24-block arena. The Paper and matching Mojang server JARs are pinned
-in the Nix package, so server startup does not require network egress.
+`JUMP_BENCHMARK_SERVER_RUNTIME` to relocate it. Paper's `max-players` value is
+the sum of `JUMP_CLIENT_COUNT` and the nonnegative
+`JUMP_SERVER_PLAYER_HEADROOM`, which defaults to one spare slot.
+`JUMP_SERVER_XMS` and `JUMP_SERVER_XMX` configure the JVM heap, with local
+defaults of `512m` and `1g`. Server simulation and view distances are both two
+chunks, which covers the fixed 24-block arena. The Paper and matching Mojang
+server JARs are pinned in the Nix package, so server startup does not require
+network egress.
 
 The `#image` app builds `result-server-image`. Use `#image -- load <tag>` to
 load the same archive into Podman, or set `JUMP_LOCAL_IMAGE_TRANSPORT` to
