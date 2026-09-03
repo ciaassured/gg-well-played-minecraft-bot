@@ -51,6 +51,7 @@
         Entrypoint = ["${trainer}/bin/jump-trainer"];
         WorkingDir = "/artifacts";
         Env = [
+          "USER=jump-trainer"
           "JUMP_TRAINER_RUN_ROOT=/artifacts/runs"
           "JUMP_TRAINER_OUTPUT_ROOT=/artifacts/evaluations"
           "JUMP_POOL_STARTUP_TIMEOUT=900"
