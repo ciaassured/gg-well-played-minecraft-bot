@@ -35,6 +35,7 @@ class GlobalRound:
     round_sequence: int
     policy_version: int
     completed: bool
+    controlled_completion: bool
     stopped: bool
     terminal_observed: bool
     winner_uuid: str | None
@@ -51,8 +52,10 @@ class GlobalRound:
 
     @property
     def outcome(self) -> str:
-        if self.completed:
+        if self.controlled_completion:
             return "COMPLETED"
+        if self.completed:
+            return "EXTERNAL_WIN"
         if self.stopped:
             return "STOPPED"
         if self.terminal_observed:
@@ -68,6 +71,10 @@ class EvaluationReport:
 
     @property
     def round_completion_rate(self) -> float:
+        return sum(round_.controlled_completion for round_ in self.rounds) / len(self.rounds)
+
+    @property
+    def shared_round_completion_rate(self) -> float:
         return sum(round_.completed for round_ in self.rounds) / len(self.rounds)
 
     @property
@@ -75,7 +82,7 @@ class EvaluationReport:
         values = [
             round_.completion_time_seconds
             for round_ in self.rounds
-            if round_.completion_time_seconds is not None
+            if round_.controlled_completion and round_.completion_time_seconds is not None
         ]
         return fmean(values) if values else None
 
@@ -113,6 +120,10 @@ class EvaluationReport:
                 round_.terminal_observed for round_ in self.rounds
             ),
             "global_round_completion_rate": self.round_completion_rate,
+            "shared_round_completion_rate": self.shared_round_completion_rate,
+            "external_win_count": sum(
+                round_.completed and not round_.controlled_completion for round_ in self.rounds
+            ),
             "mean_completion_time_seconds": self.mean_completion_time,
             "mean_best_remaining_target_distance_in_draws": self.mean_best_draw_distance,
             "global_outcomes": dict(sorted(global_outcomes.items())),
@@ -185,6 +196,7 @@ def reconcile_round(
     draws = [player for player in players if player.outcome == "DRAW"]
     stopped = [player for player in players if player.outcome == "STOPPED"]
     active_counts = [int(info["active_players"]) for info in results.values()]
+    controlled_uuids = {player.player_uuid for player in players}
     winner_uuid: str | None = None
     completion_time: float | None = None
     terminal_observed = True
@@ -208,7 +220,6 @@ def reconcile_round(
         if len(reported_winners) != 1 or None in reported_winners:
             raise ProtocolStateError("clients disagree about the external YRush winner")
         winner_uuid = reported_winners.pop()
-        controlled_uuids = {player.player_uuid for player in players}
         if participant_count == len(endpoints) or winner_uuid in controlled_uuids:
             raise ProtocolStateError("external YRush winner is inconsistent with participants")
         completion_time = min(player.completion_time_seconds for player in losses)
@@ -227,6 +238,7 @@ def reconcile_round(
         round_sequence=round_sequence,
         policy_version=policy_version,
         completed=winner_uuid is not None,
+        controlled_completion=winner_uuid in controlled_uuids,
         stopped=bool(stopped),
         terminal_observed=terminal_observed,
         winner_uuid=winner_uuid,

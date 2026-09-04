@@ -28,6 +28,11 @@ controlled client is eliminated while an external player remains, the report
 marks that global terminal as unobserved instead of misclassifying it as a
 draw.
 
+External-player wins are retained as `EXTERNAL_WIN` diagnostics but are not
+credited to the candidate policy's completion rate or completion-time ranking.
+The report also keeps the all-participant shared-round completion rate so live
+human participation remains visible.
+
 The scheduler batches every currently ready survivor. An eliminated client no
 longer gates survivor actions; all clients are armed together at each global
 round boundary. Each PPO rollout stores exactly 256 valid transitions per

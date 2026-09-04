@@ -69,10 +69,12 @@ transitions per client from one frozen policy version. Optimization overlaps
 continued play, whose transitions are discarded, and a completed policy can
 switch only for the whole pool at a global round boundary.
 
-Deterministic evaluation ranks candidates by global completion rate, then mean
-completion time, then best remaining target distance in draws. Bounded stages
-compare only the untrained and latest policies; intermediate update archives
-do not expand their evaluation budget:
+Deterministic evaluation ranks candidates by controlled-pool global completion
+rate, then mean completion time, then best remaining target distance in draws.
+Wins by ordinary players remain recorded as external shared-round completions
+but are not credited to the candidate policy. Bounded stages compare only the
+untrained and latest policies; intermediate update archives do not expand
+their evaluation budget:
 
 ```console
 nix run ./trainer#evaluate -- \

@@ -89,10 +89,18 @@ def test_external_players_can_win_a_shared_round() -> None:
     )
 
     assert complete.completed
+    assert not complete.controlled_completion
     assert complete.terminal_observed
     assert complete.winner_uuid == "human-player"
     assert complete.participant_count == 3
     assert complete.completion_time_seconds == 12.0
+    assert complete.outcome == "EXTERNAL_WIN"
+    report = EvaluationReport("candidate", 2, (complete,))
+    assert report.round_completion_rate == 0.0
+    assert report.shared_round_completion_rate == 1.0
+    assert report.mean_completion_time is None
+    assert report.as_dict()["external_win_count"] == 1
+    assert report.as_dict()["global_outcomes"] == {"EXTERNAL_WIN": 1}
 
 
 def test_all_clients_eliminated_while_external_player_survives_is_explicit() -> None:
