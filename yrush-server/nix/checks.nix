@@ -120,6 +120,8 @@
       ephemeral-runtime = pkgs.runCommand "yrush-ephemeral-runtime" {} ''
         grep -q 'YRUSH_SERVER_RUNTIME:-/data' ${./packages.nix}
         grep -q 'WorkingDir = "/data"' ${./packages.nix}
+        grep -q 'PATH=.*makeBinPath' ${./packages.nix}
+        grep -q 'pkgs.coreutils' ${./packages.nix}
         if grep -qiE 'persistentvolumeclaim|volumeclaimtemplates' ${./packages.nix}; then
           echo "server package unexpectedly provisions persistent world storage" >&2
           exit 1

@@ -317,6 +317,14 @@
         Entrypoint = ["${containerEntrypoint}/bin/yrush-server-container"];
         WorkingDir = "/data";
         Env = [
+          "PATH=${pkgs.lib.makeBinPath [
+            pkgs.coreutils
+            pkgs.findutils
+            pkgs.gawk
+            pkgs.gnugrep
+            pkgs.gnused
+            pkgs.jdk25_headless
+          ]}"
           "YRUSH_SERVER_RUNTIME=/data"
           "YRUSH_EXPECTED_CLIENT_COUNT=1"
           "YRUSH_MAX_PLAYERS=1"

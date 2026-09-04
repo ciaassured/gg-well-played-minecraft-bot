@@ -1,10 +1,42 @@
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: yrush-training
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yrush-paper-ops
+  namespace: yrush-training
+  labels:
+    app.kubernetes.io/name: yrush-paper
+data:
+  ops.json: |
+    [
+      {
+        "uuid": "e3b1f250-3927-3602-9360-4ae0fe3b6b69",
+        "name": "aurah__",
+        "level": 4,
+        "bypassesPlayerLimit": true
+      }
+    ]
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: yrush-paper
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-paper
+  annotations:
+    lbipam.cilium.io/ips: 10.128.16.2
 spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
   publishNotReadyAddresses: true
   selector:
     app.kubernetes.io/name: yrush-paper
@@ -17,6 +49,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: yrush-paper
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-paper
 spec:
@@ -31,9 +64,49 @@ spec:
       labels:
         app.kubernetes.io/name: yrush-paper
     spec:
-      terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
       nodeSelector:
         yrush.gg/local-ssd: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: yrush-client
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: seed-operator-config
+          image: docker.io/library/busybox@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+          imagePullPolicy: IfNotPresent
+          command: [/bin/cp, /config/ops.json, /data/ops.json]
+          resources:
+            requests:
+              cpu: 1m
+              memory: 1Mi
+            limits:
+              cpu: 50m
+              memory: 16Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: ops
+              mountPath: /config
+              readOnly: true
       containers:
         - name: paper
           image: ghcr.io/ciaassured/gg-well-played-minecraft-bot-server:REPLACE_WITH_COMMIT
@@ -64,12 +137,12 @@ spec:
               value: "1"
           readinessProbe:
             exec:
-              command: ["test", "-s", "/data/ready"]
+              command: [test, -s, /data/ready]
             periodSeconds: 2
             failureThreshold: 3
           livenessProbe:
             exec:
-              command: ["test", "!", "-e", "/data/fixed-pool-failure"]
+              command: [test, "!", -e, /data/fixed-pool-failure]
             periodSeconds: 5
             failureThreshold: 1
           resources:
@@ -81,18 +154,31 @@ spec:
               cpu: "4"
               memory: 10Gi
               ephemeral-storage: 50Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           emptyDir:
             sizeLimit: 50Gi
+        - name: ops
+          configMap:
+            name: yrush-paper-ops
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: yrush-clients
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-client
 spec:
@@ -109,12 +195,20 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: yrush-client
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-client
 spec:
   replicas: 4
   podManagementPolicy: Parallel
   serviceName: yrush-clients
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 100%
   selector:
     matchLabels:
       app.kubernetes.io/name: yrush-client
@@ -123,9 +217,39 @@ spec:
       labels:
         app.kubernetes.io/name: yrush-client
     spec:
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 568
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: yrush-paper
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: yrush-client
       containers:
-        - name: minecraft
+        - name: client
           image: ghcr.io/ciaassured/gg-well-played-minecraft-bot-client:REPLACE_WITH_COMMIT
           imagePullPolicy: IfNotPresent
           ports:
@@ -142,37 +266,59 @@ spec:
               value: 0.0.0.0
             - name: YRUSH_TRAINER_PORT
               value: "64123"
+            - name: YRUSH_CLIENT_RUNTIME
+              value: /runtime
+            - name: YRUSH_CLIENT_READINESS_FILE
+              value: /runtime/ready
             - name: YRUSH_CLIENT_XMS
-              value: 256m
+              value: 192m
             - name: YRUSH_CLIENT_XMX
-              value: 512m
+              value: 320m
           readinessProbe:
             exec:
-              command: ["test", "-s", "/runtime/ready"]
-            periodSeconds: 2
-            failureThreshold: 5
+              command: [test, -s, /runtime/ready]
+            periodSeconds: 5
+            failureThreshold: 180
           resources:
             requests:
-              cpu: 250m
-              memory: 384Mi
+              cpu: 500m
+              memory: 1152Mi
             limits:
               cpu: "1"
-              memory: 768Mi
+              memory: 1152Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
           volumeMounts:
             - name: runtime
               mountPath: /runtime
+            - name: tmp
+              mountPath: /tmp
       volumes:
-        - name: runtime
+        - name: tmp
           emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: runtime
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: nfs-nasdaq
+        resources:
+          requests:
+            storage: 2Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: yrush-artifacts
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-trainer
 spec:
-  accessModes: ["ReadWriteOnce"]
+  accessModes: [ReadWriteMany]
+  storageClassName: nfs-nasdaq
   resources:
     requests:
       storage: 50Gi
@@ -181,6 +327,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: yrush-run-metadata
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-trainer
 data:
@@ -194,10 +341,134 @@ data:
   YRUSH_SERVER_POD_UID: REPLACE_WITH_SERVER_POD_UID
   YRUSH_SERVER_RESTART_COUNT: "0"
 ---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: yrush-default-deny
+  namespace: yrush-training
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            yrush-training-default-deny: "never"
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            yrush-training-default-deny: "never"
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: yrush-dns
+  namespace: yrush-training
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: yrush-trainer-to-clients
+  namespace: yrush-training
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: yrush-trainer
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: yrush-client
+      toPorts:
+        - ports:
+            - port: "64123"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: yrush-client-ingress
+  namespace: yrush-training
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: yrush-client
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: yrush-trainer
+      toPorts:
+        - ports:
+            - port: "64123"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: yrush-clients-to-paper-and-downloads
+  namespace: yrush-training
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: yrush-client
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: yrush-paper
+      toPorts:
+        - ports:
+            - port: "25565"
+              protocol: TCP
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: yrush-paper-ingress
+  namespace: yrush-training
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: yrush-paper
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: yrush-client
+      toPorts:
+        - ports:
+            - port: "25565"
+              protocol: TCP
+    - fromCIDR:
+        - 192.168.98.0/24
+      toPorts:
+        - ports:
+            - port: "25565"
+              protocol: TCP
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: yrush-canary
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-trainer
     yrush.gg/stage: canary
@@ -210,7 +481,16 @@ spec:
         app.kubernetes.io/name: yrush-trainer
         yrush.gg/stage: canary
     spec:
+      automountServiceAccountToken: false
       restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 568
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: trainer
           image: ghcr.io/ciaassured/gg-well-played-minecraft-bot-trainer:REPLACE_WITH_COMMIT
@@ -227,18 +507,46 @@ spec:
           envFrom:
             - configMapRef:
                 name: yrush-run-metadata
+          env:
+            - name: HOME
+              value: /tmp
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+            - name: OPENBLAS_NUM_THREADS
+              value: "1"
+            - name: NUMEXPR_NUM_THREADS
+              value: "1"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
           volumeMounts:
             - name: artifacts
               mountPath: /artifacts
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: artifacts
           persistentVolumeClaim:
             claimName: yrush-artifacts
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: yrush-tuning-canary
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-trainer
     yrush.gg/stage: tuning-canary
@@ -251,7 +559,16 @@ spec:
         app.kubernetes.io/name: yrush-trainer
         yrush.gg/stage: tuning-canary
     spec:
+      automountServiceAccountToken: false
       restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 568
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: trainer
           image: ghcr.io/ciaassured/gg-well-played-minecraft-bot-trainer:REPLACE_WITH_COMMIT
@@ -268,18 +585,46 @@ spec:
           envFrom:
             - configMapRef:
                 name: yrush-run-metadata
+          env:
+            - name: HOME
+              value: /tmp
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+            - name: OPENBLAS_NUM_THREADS
+              value: "1"
+            - name: NUMEXPR_NUM_THREADS
+              value: "1"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
           volumeMounts:
             - name: artifacts
               mountPath: /artifacts
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: artifacts
           persistentVolumeClaim:
             claimName: yrush-artifacts
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: yrush-proof
+  namespace: yrush-training
   labels:
     app.kubernetes.io/name: yrush-trainer
     yrush.gg/stage: proof
@@ -292,7 +637,16 @@ spec:
         app.kubernetes.io/name: yrush-trainer
         yrush.gg/stage: proof
     spec:
+      automountServiceAccountToken: false
       restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 568
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: trainer
           image: ghcr.io/ciaassured/gg-well-played-minecraft-bot-trainer:REPLACE_WITH_COMMIT
@@ -309,10 +663,37 @@ spec:
           envFrom:
             - configMapRef:
                 name: yrush-run-metadata
+          env:
+            - name: HOME
+              value: /tmp
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+            - name: OPENBLAS_NUM_THREADS
+              value: "1"
+            - name: NUMEXPR_NUM_THREADS
+              value: "1"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
           volumeMounts:
             - name: artifacts
               mountPath: /artifacts
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: artifacts
           persistentVolumeClaim:
             claimName: yrush-artifacts
+        - name: tmp
+          emptyDir: {}
