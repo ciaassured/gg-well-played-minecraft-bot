@@ -41,6 +41,11 @@ Fabric clients is a fixed-pool failure and aborts an active trainer command.
 Other players can join and leave normally and are enrolled by YRush at the
 next complete round boundary, up to `YRUSH_MAX_PLAYERS`.
 
+A container restart automatically reuses the pod's SSD-backed ephemeral world,
+re-establishes the complete client pool, and resumes YRush training. A trainer
+command spanning that interruption still fails; start a fresh bounded stage
+after the server and all clients are ready again.
+
 ## Farm deployment
 
 Kubernetes deployment and operating instructions live only in the sibling

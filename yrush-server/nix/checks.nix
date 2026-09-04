@@ -99,6 +99,26 @@
           echo "duplicate required-client names unexpectedly passed validation" >&2
           exit 1
         fi
+
+        recovery_runtime="$TMPDIR/recovery-runtime"
+        first_prepare=$(YRUSH_ENTRYPOINT_PREPARE_ONLY=1 \
+          YRUSH_SERVER_RUNTIME="$recovery_runtime" \
+          POD_UID=recovery-pod \
+          ${serverArtifacts.containerEntrypoint}/bin/yrush-server-container)
+        grep -q 'restart=0' <<<"$first_prepare"
+        mkdir -p "$recovery_runtime/world/region"
+        touch "$recovery_runtime/world/region/warm-chunk"
+        touch "$recovery_runtime/ready" "$recovery_runtime/fixed-pool-failure"
+        second_prepare=$(YRUSH_ENTRYPOINT_PREPARE_ONLY=1 \
+          YRUSH_SERVER_RUNTIME="$recovery_runtime" \
+          POD_UID=recovery-pod \
+          ${serverArtifacts.containerEntrypoint}/bin/yrush-server-container)
+        grep -q 'recovering YRush server container in pod recovery-pod (restart=1)' \
+          <<<"$second_prepare"
+        grep -q 'prepared pod=recovery-pod restart=1' <<<"$second_prepare"
+        test -e "$recovery_runtime/world/region/warm-chunk"
+        test ! -e "$recovery_runtime/ready"
+        test ! -e "$recovery_runtime/fixed-pool-failure"
         touch "$out"
       '';
 
@@ -131,8 +151,12 @@
         grep -q 'YRUSH_METRIC' ${./packages.nix}
         grep -q 'world_growth_bytes' ${./packages.nix}
         grep -q 'round_preparation_ms' ${./packages.nix}
-        grep -q 'YRUSH_FAIL_ON_CONTAINER_RESTART' ${./packages.nix}
-        grep -q 'refusing to reuse the active world' ${./packages.nix}
+        grep -q 'recovering YRush server container' ${./packages.nix}
+        grep -q 'preserving world' ${./packages.nix}
+        if grep -q 'YRUSH_FAIL_ON_CONTAINER_RESTART' ${./packages.nix}; then
+          echo "server package still contains the permanent restart-failure guard" >&2
+          exit 1
+        fi
         touch "$out"
       '';
 

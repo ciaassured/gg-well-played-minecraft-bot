@@ -29,8 +29,6 @@ Configuration is external:
 - `YRUSH_WORLD_SEED` sets normal-world generation.
 - `YRUSH_STARTUP_TIMEOUT_SECONDS` bounds Paper startup and client arrival.
 - `YRUSH_SERVER_RUNTIME` relocates mutable state.
-- `YRUSH_FAIL_ON_CONTAINER_RESTART=1` makes a Kubernetes container restart
-  fail against the surviving `emptyDir` instead of silently reusing the world.
 
 After Paper is ready, the entrypoint waits for every named Fabric client,
 issues `yrush start training` once, verifies YRush accepted at least that many
@@ -40,6 +38,14 @@ fail. Other players may freely join and leave like a normal server. YRush adds
 eligible extra players to the next complete round; a player arriving during an
 active round waits in the lobby until that boundary. Termination sends
 `yrush stop` before Paper's `stop` command.
+
+If the container restarts inside the same pod, the entrypoint clears stale
+readiness and failure files, preserves the world on the disk-backed
+`emptyDir`, restarts Paper, waits for the complete required client pool, and
+starts YRush training again. Its per-pod restart generation is recorded in
+the readiness metadata and metrics. Client disconnects still abort any trainer
+command that was active during the interruption, so recovery cannot turn an
+infrastructure failure into a learning transition.
 
 The server emits `YRUSH_METRIC` records for ephemeral disk use, world size, and
 round-preparation latency and requests Paper TPS output every ten seconds. Size

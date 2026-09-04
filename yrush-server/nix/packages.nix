@@ -87,7 +87,6 @@
         startup_timeout="''${YRUSH_STARTUP_TIMEOUT_SECONDS:-900}"
         pod_uid="''${POD_UID:-local}"
         restart_count="''${POD_RESTART_COUNT:-0}"
-        fail_on_restart="''${YRUSH_FAIL_ON_CONTAINER_RESTART:-0}"
 
         if [[ ! "$expected_clients" =~ ^[1-9][0-9]*$ ]]; then
           echo "YRUSH_EXPECTED_CLIENT_COUNT must be a positive integer" >&2
@@ -122,6 +121,10 @@
           echo "YRUSH_STARTUP_TIMEOUT_SECONDS must be a positive integer" >&2
           exit 2
         fi
+        if [[ ! "$restart_count" =~ ^[0-9]+$ ]]; then
+          echo "POD_RESTART_COUNT must be a non-negative integer" >&2
+          exit 2
+        fi
         if [[ -z "$server_xms" || -z "$server_xmx" ]]; then
           echo "YRUSH_SERVER_XMS and YRUSH_SERVER_XMX must not be blank" >&2
           exit 2
@@ -135,13 +138,24 @@
 
         mkdir -p "$runtime_dir/cache" "$runtime_dir/plugins/YRush"
         start_marker="$runtime_dir/.yrush-server-started"
-        if [[ "$fail_on_restart" == 1 && -e "$start_marker" ]]; then
-          printf 'server container restarted in pod %s; refusing to reuse the active world\n' \
-            "$pod_uid" > "$runtime_dir/fixed-pool-failure"
-          cat "$runtime_dir/fixed-pool-failure" >&2
-          exit 1
+        if [[ -s "$start_marker" ]]; then
+          previous_pod_uid=""
+          previous_restart_count=""
+          IFS=$'\t' read -r previous_pod_uid previous_restart_count < "$start_marker" || true
+          if [[ "$previous_pod_uid" == "$pod_uid" ]]; then
+            if [[ "$previous_restart_count" =~ ^[0-9]+$ ]]; then
+              restart_count=$((previous_restart_count + 1))
+            else
+              restart_count=$((restart_count + 1))
+            fi
+            printf 'recovering YRush server container in pod %s (restart=%s); preserving world\n' \
+              "$pod_uid" "$restart_count"
+          else
+            printf 'starting YRush server with runtime from pod %s under pod %s; preserving world\n' \
+              "$previous_pod_uid" "$pod_uid"
+          fi
         fi
-        printf '%s\n' "$pod_uid" > "$start_marker.tmp"
+        printf '%s\t%s\n' "$pod_uid" "$restart_count" > "$start_marker.tmp"
         mv "$start_marker.tmp" "$start_marker"
         ln -sfn ${serverPackage}/share/yrush-server/paper-26.2-112.jar \
           "$runtime_dir/paper.jar"
@@ -149,7 +163,7 @@
           "$runtime_dir/cache/mojang_26.2.jar"
         ln -sfn ${serverPackage}/share/yrush-server/YRush-1.3.1.jar \
           "$runtime_dir/plugins/YRush.jar"
-        cp ${yrushConfig} "$runtime_dir/plugins/YRush/config.yml"
+        install -m 0644 ${yrushConfig} "$runtime_dir/plugins/YRush/config.yml"
         printf 'eula=true\n' > "$runtime_dir/eula.txt"
         sed \
           -e "s/@MAX_PLAYERS@/$max_players/" \
@@ -160,6 +174,11 @@
         fatal_file="$runtime_dir/fixed-pool-failure"
         console_fifo="$runtime_dir/.yrush-console"
         rm -f "$ready_file" "$fatal_file" "$console_fifo"
+        if [[ "''${YRUSH_ENTRYPOINT_PREPARE_ONLY:-0}" == 1 ]]; then
+          printf 'prepared pod=%s restart=%s runtime=%s\n' \
+            "$pod_uid" "$restart_count" "$runtime_dir"
+          exit 0
+        fi
         mkfifo "$console_fifo"
         exec 3<>"$console_fifo"
         cd "$runtime_dir"
@@ -346,9 +365,9 @@
               world_bytes=$(du -sb "$runtime_dir/world" | awk '{print $1}')
             fi
             world_growth_bytes=$((world_bytes - initial_world_bytes))
-            printf 'YRUSH_METRIC {"disk_bytes":%s,"world_bytes":%s,"world_growth_bytes":%s,"online_players":%s,"required_clients":%s}\n' \
+            printf 'YRUSH_METRIC {"disk_bytes":%s,"world_bytes":%s,"world_growth_bytes":%s,"online_players":%s,"required_clients":%s,"pod_uid":"%s","restart_count":%s}\n' \
               "$disk_bytes" "$world_bytes" "$world_growth_bytes" "$observed" \
-              "$expected_clients"
+              "$expected_clients" "$pod_uid" "$restart_count"
             printf 'tps\n' >&3 || true
             sleep 10
           done
@@ -399,7 +418,6 @@
           "YRUSH_SERVER_XMX=4g"
           "YRUSH_WORLD_SEED=20260904"
           "YRUSH_STARTUP_TIMEOUT_SECONDS=900"
-          "YRUSH_FAIL_ON_CONTAINER_RESTART=0"
         ];
       };
     };
