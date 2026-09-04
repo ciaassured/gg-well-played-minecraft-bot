@@ -38,6 +38,10 @@ the frozen policy continues acting; later transitions are discarded. A ready
 candidate switches globally only at a boundary. If it is not ready, the old
 policy remains for the entire next round.
 
+Each bounded stage evaluates only its untrained and latest policies for the
+configured number of deterministic rounds. Intermediate update archives are
+retained for diagnosis but do not multiply the tuning or proof budget.
+
 `training.toml` contains the initial defaults. Only PPO initialization and
 action sampling use its seed; Minecraft rounds are not seeded by the trainer.
 The policy and value networks are separate two-layer, 128-unit MLPs without

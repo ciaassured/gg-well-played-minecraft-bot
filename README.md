@@ -70,7 +70,9 @@ continued play, whose transitions are discarded, and a completed policy can
 switch only for the whole pool at a global round boundary.
 
 Deterministic evaluation ranks candidates by global completion rate, then mean
-completion time, then best remaining target distance in draws:
+completion time, then best remaining target distance in draws. Bounded stages
+compare only the untrained and latest policies; intermediate update archives
+do not expand their evaluation budget:
 
 ```console
 nix run ./trainer#evaluate -- \

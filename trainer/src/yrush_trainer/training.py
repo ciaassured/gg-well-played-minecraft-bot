@@ -61,6 +61,12 @@ def evaluate_policy(
     )
 
 
+def evaluation_checkpoints(run: RunDirectory) -> tuple[Path, Path]:
+    """Return the two policies compared by every bounded validation stage."""
+
+    return run.untrained_checkpoint, run.latest_checkpoint
+
+
 def train(
     config: TrainConfig,
     run_root: Path,
@@ -258,10 +264,9 @@ def train(
         evaluation_owns_pool = pool is None
         try:
             evaluation_pool.start()
-            checkpoints = [run.untrained_checkpoint, *sorted(run.candidates.glob("policy-*.zip"))]
             best_report: EvaluationReport | None = None
             best_checkpoint = run.untrained_checkpoint
-            for checkpoint in checkpoints:
+            for checkpoint in evaluation_checkpoints(run):
                 candidate_model, metadata = load_checkpoint(
                     checkpoint, expected_client_count=config.expected_client_count
                 )
