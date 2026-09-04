@@ -1,136 +1,90 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from typing import Any, ClassVar
+
 import numpy as np
-import pytest
 
-from jump_trainer.endpoints import Endpoint
-from jump_trainer.env import JUMP, NOOP, MinecraftJumpEnv
-from jump_trainer.errors import InfrastructureError
-from jump_trainer.pool import ClientPool, TrainingSeedStreams
-from tests.fakes import SimulatedConnection
+from yrush_trainer.endpoints import Endpoint
+from yrush_trainer.pool import ClientPool
+
+from .fakes import StaticPolicy, normalized_observation
 
 
-class AlwaysJump:
-    def actions(
-        self,
-        actor_indices: tuple[int, ...],
-        observations: np.ndarray,
-        *,
-        deterministic: bool,
-    ) -> np.ndarray:
-        del observations, deterministic
-        return np.full(len(actor_indices), JUMP, dtype=np.int64)
+class AsyncFakeEnv:
+    calls: ClassVar[dict[int, int]] = defaultdict(int)
 
-    def reset(self, actor_index: int) -> None:
-        del actor_index
+    def __init__(self, actor: int) -> None:
+        self.actor = actor
+        self.player_uuid = f"player-{actor}"
+        self.player_name = f"player-{actor}"
+        self.round_sequence = 0
+        self.policy_version = 0
+        self.steps = 0
 
+    def connect(self) -> None:
+        return None
 
-class AlwaysNoop(AlwaysJump):
-    def actions(
-        self,
-        actor_indices: tuple[int, ...],
-        observations: np.ndarray,
-        *,
-        deterministic: bool,
-    ) -> np.ndarray:
-        del observations, deterministic
-        return np.full(len(actor_indices), NOOP, dtype=np.int64)
+    def reset(self, *, options: dict[str, Any]) -> tuple[np.ndarray, dict[str, Any]]:
+        self.round_sequence = int(options["round_sequence"])
+        self.policy_version = int(options["policy_version"])
+        self.steps = 0
+        return normalized_observation(), self._info(None, False)
 
-
-def _pool(width: int) -> tuple[ClientPool, list[SimulatedConnection]]:
-    endpoints = tuple(Endpoint(index, f"client-{index}", 64123, index) for index in range(width))
-    connections = [SimulatedConnection() for _ in endpoints]
-
-    def factory(endpoint: Endpoint) -> MinecraftJumpEnv:
-        return MinecraftJumpEnv(
-            connection_factory=lambda: connections[endpoint.index],
-            identifier_base=10_000 + endpoint.index * 1_000,
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
+        assert action.shape == (6,)
+        self.steps += 1
+        self.calls[self.actor] += 1
+        terminal = self.steps >= (1 if self.actor == 0 else 3)
+        outcome = "ELIMINATED" if self.actor == 0 else "WON"
+        return (
+            normalized_observation(self.steps / 10),
+            -1.0 if self.actor == 0 else 1.0,
+            terminal,
+            False,
+            self._info(outcome if terminal else None, True),
         )
 
-    return (
-        ClientPool(
-            endpoints,
-            startup_timeout=1,
-            message_timeout=1,
-            reset_retries=1,
-            environment_factory=factory,
-        ),
-        connections,
-    )
+    def _info(self, outcome: str | None, valid: bool) -> dict[str, Any]:
+        return {
+            "round_sequence": self.round_sequence,
+            "policy_version": self.policy_version,
+            "player_uuid": self.player_uuid,
+            "player_name": self.player_name,
+            "outcome": outcome,
+            "winner_uuid": "player-1" if outcome == "WON" else None,
+            "participant_count": 2,
+            "completion_time_seconds": float(self.steps),
+            "best_remaining_target_distance": float(3 - self.steps),
+            "episode_return": float(self.steps),
+            "episode_actions": self.steps,
+            "observation_clipped_features": 0,
+            "target_direction": "UP",
+            "target_progress": float(self.steps),
+            "client_tick_delta": 4 if valid else None,
+            "valid_transition": valid,
+        }
+
+    def close(self) -> None:
+        return None
 
 
-def test_parallel_evaluation_assigns_each_seed_once_and_sorts_report() -> None:
-    pool, connections = _pool(3)
-    with pool:
-        report = pool.evaluate(AlwaysJump(), (9, 3, 7, 1, 5), policy_id="fixed", suite="test")
-    assert [episode.seed for episode in report.episodes] == [1, 3, 5, 7, 9]
-    assert sum(len(connection.reset_seeds) for connection in connections) == 5
-    assigned = sorted(seed for connection in connections for seed in connection.reset_seeds)
-    assert assigned == [1, 3, 5, 7, 9]
-    assert report.success_count == 5
-
-
-def test_collection_overshoot_is_bounded_by_pool_width() -> None:
-    pool, _connections = _pool(3)
-    batches: list[tuple[int, int]] = []
-    with pool:
-        result = pool.collect(
-            requested_total=5,
-            actual_total=0,
-            first_cycle=0,
-            seeds=TrainingSeedStreams(42, pool.endpoints),
-            policy=AlwaysJump(),
-            transition_sink=lambda transitions, cycle: batches.append((cycle, len(transitions))),
+def test_eliminated_actor_does_not_block_survivor_actions() -> None:
+    AsyncFakeEnv.calls.clear()
+    endpoints = (Endpoint(0, "client-0", 1, 0), Endpoint(1, "client-1", 1, 1))
+    transitions = []
+    with ClientPool(
+        endpoints,
+        startup_timeout=2.0,
+        message_timeout=1.0,
+        round_timeout=2.0,
+        environment_factory=lambda endpoint: AsyncFakeEnv(endpoint.index),
+    ) as pool:
+        result = pool.drive(
+            StaticPolicy(), deterministic=False, rounds=1, transition_sink=transitions.append
         )
-    assert result.actual_transitions == 6
-    assert result.actual_transitions - result.requested_transitions < pool.width
-    assert batches == [(1, 3), (2, 3)]
-
-
-def test_abort_barrier_disconnects_all_actors_before_subset_evaluation() -> None:
-    pool, connections = _pool(3)
-    with pool:
-        pool.collect(
-            requested_total=3,
-            actual_total=0,
-            first_cycle=0,
-            seeds=TrainingSeedStreams(42, pool.endpoints),
-            policy=AlwaysNoop(),
-            transition_sink=lambda _transitions, _cycle: None,
-        )
-        pool.abort_active_episodes()
-        assert all(connection.closed for connection in connections)
-        report = pool.evaluate(
-            AlwaysJump(),
-            (100_000,),
-            policy_id="after-barrier",
-            suite="test",
-        )
-
-    assert report.success_count == 1
-    assert sum(len(connection.reset_seeds) for connection in connections) == 4
-    assert pool.stats()["episode_abort_barriers"] == 1
-
-
-def test_training_seed_streams_are_per_client_and_repeatable() -> None:
-    endpoints = tuple(Endpoint(index, f"client-{index}", 64123, index) for index in range(3))
-    first = TrainingSeedStreams(123, endpoints)
-    second = TrainingSeedStreams(123, endpoints)
-    first_values = [[first.next(index) for _ in range(5)] for index in range(3)]
-    second_values = [[second.next(index) for _ in range(5)] for index in range(3)]
-    assert first_values == second_values
-    assert len({tuple(values) for values in first_values}) == 3
-
-
-def test_any_client_loss_fails_the_fixed_pool() -> None:
-    pool, connections = _pool(2)
-    connections[1].fail_next_step = True
-    with pool, pytest.raises(InfrastructureError, match="configured client client-1:64123"):
-        pool.collect(
-            requested_total=2,
-            actual_total=0,
-            first_cycle=0,
-            seeds=TrainingSeedStreams(42, pool.endpoints),
-            policy=AlwaysJump(),
-            transition_sink=lambda _transitions, _cycle: None,
-        )
+    assert AsyncFakeEnv.calls == {0: 1, 1: 3}
+    assert result.valid_transitions == 4
+    assert result.rounds[0].winner_uuid == "player-1"
+    assert [transition.actor_index for transition in transitions].count(0) == 1
+    assert [transition.actor_index for transition in transitions].count(1) == 3

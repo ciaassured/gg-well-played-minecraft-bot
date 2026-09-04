@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   publish-images:
-    name: Publish coordinated protocol-v3 images
+    name: Publish coordinated yrush-v1 images
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -29,7 +29,7 @@ jobs:
 
       - name: Build all images before publishing any
         run: |
-          nix run ./benchmark-server#image -- build result-server
+          nix run ./yrush-server#image -- build result-server
           nix run ./client-mod#image -- build result-client
           nix run ./trainer#image -- build result-trainer
 
@@ -38,6 +38,6 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          nix run ./benchmark-server#image -- publish "$IMAGE_REVISION"
+          nix run ./yrush-server#image -- publish "$IMAGE_REVISION"
           nix run ./client-mod#image -- publish "$IMAGE_REVISION"
           nix run ./trainer#image -- publish "$IMAGE_REVISION"

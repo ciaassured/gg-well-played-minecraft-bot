@@ -1,7 +1,7 @@
 {...}: {
   perSystem = {pkgs, ...}: {
     formatter = pkgs.writeShellApplication {
-      name = "format-jump-benchmark-client";
+      name = "format-yrush-client";
       runtimeInputs = [pkgs.alejandra pkgs.google-java-format pkgs.ktlint];
       text = ''
         target="''${1:-.}"

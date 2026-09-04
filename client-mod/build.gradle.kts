@@ -29,7 +29,7 @@ val protocolRoot = protocolDir.map { file(it) }
 val generatedProtoDir = layout.buildDirectory.dir("generated/source/proto/main/java")
 
 val generateProto by tasks.registering(Exec::class) {
-    val source = protocolRoot.map { it.resolve("proto/jump/v1/jump.proto") }
+    val source = protocolRoot.map { it.resolve("proto/yrush/v1/yrush.proto") }
     inputs.file(source)
     outputs.dir(generatedProtoDir)
     doFirst {
@@ -70,7 +70,7 @@ tasks.processResources {
 val coreTest by tasks.registering(JavaExec::class) {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
-    mainClass = "gg.wellplayed.jump.client.core.CoreTestMain"
+    mainClass = "gg.wellplayed.yrush.client.core.CoreTestMain"
     jvmArgs("-ea")
 }
 

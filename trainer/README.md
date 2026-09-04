@@ -1,9 +1,9 @@
-# Parallel DQN trainer
+# Asynchronous PPO trainer
 
-The trainer owns Gymnasium semantics, deterministic normalization/reward,
-seed partitions, the fixed actor pool, batched inference, one spawned SB3 DQN
-learner, validation promotion, final evaluation, and checkpoint/metric
-artifacts. It never starts Paper or Minecraft and contains no recording code.
+The trainer owns Gymnasium semantics, deterministic normalization and reward,
+fixed-pool scheduling, Stable-Baselines3 PPO optimization, global policy
+switches, deterministic evaluation, and persistent run artifacts. It never
+starts Paper or Minecraft.
 
 ```console
 nix develop ./trainer
@@ -12,38 +12,40 @@ nix build ./trainer#oci
 nix run ./trainer#image
 nix flake check ./trainer
 (cd trainer && nix fmt)
-nix run ./trainer#smoke
-nix run ./trainer#capacity -- --transitions 2000
-nix run ./trainer#train -- --timesteps 30000
-nix run ./trainer#pipeline -- --run-id <id> --timesteps 30000
+nix run ./trainer#smoke -- --rounds 2
+nix run ./trainer#canary -- --run-id <id>
+nix run ./trainer#tuning-canary -- --run-id <id>
+nix run ./trainer#proof -- --run-id <id>
 ```
 
-Every command accepts either repeatable `--endpoint HOST:PORT`, or
-`--endpoint-template ... --clients N`. `--host`/`--port` remain the local
-single-client fallback and cannot be mixed with pool options. Duplicate or
-invalid endpoints and nonpositive counts are rejected. Kubernetes sets the
-pool startup timeout to 900 seconds for first-time client downloads.
+Every command accepts repeatable `--endpoint HOST:PORT` or an
+`--endpoint-template ... --clients N` pair. Kubernetes supplies all fixed
+StatefulSet endpoints. Losing any endpoint aborts the run and never creates a
+learning transition.
 
-One I/O actor thread owns each endpoint. The coordinator permits one in-flight
-transition per actor and batches all currently available observations. The
-spawned learner exclusively owns the SB3 model, replay buffer, optimizer,
-counters, and checkpoint writes. Its transition queue holds at most two
-batches; learner death, saturation, client loss, or policy lag over two action
-cycles fails the complete run.
+The scheduler batches every currently ready survivor. An eliminated client no
+longer gates survivor actions; all clients are armed together at each global
+round boundary. Each PPO rollout stores exactly 256 valid transitions per
+client from one policy version, with observation, six-head action, reward,
+termination state, action log probability, and value. GAE is computed per
+client across episode boundaries. Optimization runs on a copied model while
+the frozen policy continues acting; later transitions are discarded. A ready
+candidate switches globally only at a boundary. If it is not ready, the old
+policy remains for the entire next round.
 
-Schedules use aggregate transitions regardless of client count: learning
-starts after 500 transitions, one gradient step occurs per four later
-transitions, the target updates every 1,000 transitions, and epsilon/checkpoint
-intervals use aggregate counts. Validation barriers stop actions, collect the
-in-flight pool width, drain the learner, and evaluate a frozen policy without
-changing replay state. Fixed validation/evaluation seeds are each assigned
-once and results are sorted by seed. Training streams are independently derived
-from `(run seed, client ordinal)`.
+`training.toml` contains the initial defaults. Only PPO initialization and
+action sampling use its seed; Minecraft rounds are not seeded by the trainer.
+The policy and value networks are separate two-layer, 128-unit MLPs without
+recurrence or history. At five decisions per second, `gamma = 0.999` gives an
+effective reward horizon of roughly 200 seconds.
 
-`pipeline` trains and promotes with the established lexicographic ordering,
-then evaluates `best.zip` in the same process and Job. `capacity` exercises the
-same actor/inference coordinator with a scripted policy and no learning.
+Runs preserve `untrained.zip`, `latest.zip`, `best.zip`, all update candidates,
+round records, PPO metrics, action distributions, client cadence/throughput,
+deployment revisions, server identity, restart count, expected pool size, and
+world seed. Every archive embeds protocol, spaces, normalization, and
+deployment metadata. Unsupported archives, including old DQN files, are
+rejected before SB3 loads them.
 
-The `#image` app builds `result-trainer-image`. Use `#image -- load <tag>` to
-load the same archive into Podman, or set `JUMP_LOCAL_IMAGE_TRANSPORT` to
-`docker-daemon` for Docker. The root README documents coordinated publication.
+The `#image` app retains the generic trainer GHCR repository. `/artifacts` is
+the persistent trainer volume and is independent of the server's ephemeral
+world. The root README is the canonical orchestration guide.

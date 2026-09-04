@@ -1,16 +1,15 @@
-# Benchmark wire protocol
+# YRush trainer protocol
 
-`proto/jump/v1/jump.proto` is the canonical, versioned contract. The package
-remains `jump.v1`, while the incompatible wire protocol is version 3. Paper,
-Fabric, and Python reject other protocol-version values.
+`proto/yrush/v1/yrush.proto` is the canonical trainer-to-Fabric contract. It
+uses the intentionally incompatible `yrush.v1` namespace and protocol version
+1. Paper-to-Fabric state is a separate JSON schema supplied by YRush on
+`yrush:bot_state`.
 
-`WireMessage` is the only top-level message. TCP uses a four-byte unsigned
-big-endian length prefix; Minecraft uses custom-payload framing. Both reject
-messages larger than 1 MiB.
-
-Protocol v3 contains connection, reset, state, action, observation, result,
-error, and shutdown messages only. Removed capture fields 21–23 and recording
-fields 24–27 are reserved by number and name so they cannot be reused.
+`WireMessage` is the only top-level Protobuf message. TCP uses a four-byte
+unsigned big-endian length prefix and rejects messages larger than 1 MiB. The
+contract covers identity/readiness, arming a future round, episode readiness,
+six-head actions and acknowledgements, observations, results, errors, and
+shutdown. It contains no world-reset operation or server topology identifier.
 
 ```console
 nix build ./protocol
@@ -18,6 +17,5 @@ nix flake check ./protocol
 (cd protocol && nix fmt)
 ```
 
-The build produces the schema and descriptor sets but runs no service.
-Consumers generate their own language bindings from this non-flake source
-input.
+The build produces schemas and descriptor sets but runs no service. Consumers
+generate their own bindings from this non-flake source input.

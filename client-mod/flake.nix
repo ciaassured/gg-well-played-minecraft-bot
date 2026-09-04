@@ -1,5 +1,5 @@
 {
-  description = "Fabric 26.2 tick-synchronous one-block jump client";
+  description = "Fabric 26.2 bridge for YRush shared rounds";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/ffb3c9b700e759be2ef13237c9d8f953b32a1e46";

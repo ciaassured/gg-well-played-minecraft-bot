@@ -9,17 +9,16 @@
 - `protocol/` is the canonical versioned Protobuf contract. It builds schemas
   and a descriptor set but runs no service. Consumers generate their own Java
   or Python bindings from this non-flake source input.
-- `benchmark-server/` packages Paper and the benchmark plugin. It constructs
-  the fixed arena, resets the player, advances authoritative episode time, and
-  decides success, missed-jump failure, and timeout.
+- `yrush-server/` packages Paper and the pinned YRush plugin. It owns the
+  ordinary shared world, waits for the fixed client pool, starts training mode,
+  and exposes server health and storage metrics. It runs no trainer protocol.
 - `client-mod/` packages the Fabric bridge and isolated HeadlessMC clients. It
-  relays reset/state messages, observes the local player, applies input, and
+  consumes YRush state packets, observes the local player, applies input, and
   safely releases all controls. Each persistent client owns one externally
-  configured trainer listener and Paper connection.
+  configured trainer listener and joins the same Paper server.
 - `trainer/` owns the Gymnasium environment, deterministic normalization and
-  reward, seed partitions, baselines, SB3 DQN training, validation promotion,
-  final evaluation, saved-model inference, and run artifacts. It never
-  starts Paper or Minecraft.
+  reward, feed-forward SB3 PPO training, shared-round evaluation, saved-model
+  inference, and run artifacts. It never starts Paper or Minecraft.
 - `replay-renderer/` validates retained `.mcpr` archives and drives Replay Mod's
   camera-path renderer under Xvfb and Mesa software OpenGL, then verifies the
   resulting MP4 with `ffprobe`. It neither captures episodes nor trains models.
@@ -29,8 +28,8 @@
 ```console
 nix build ./protocol
 nix flake check ./protocol
-nix build ./benchmark-server
-nix flake check ./benchmark-server
+nix build ./yrush-server
+nix flake check ./yrush-server
 nix build ./client-mod
 nix flake check ./client-mod
 nix build ./trainer
@@ -43,7 +42,7 @@ Formatting remains project-local as well:
 
 ```console
 (cd protocol && nix fmt)
-(cd benchmark-server && nix fmt)
+(cd yrush-server && nix fmt)
 (cd client-mod && nix fmt)
 (cd trainer && nix fmt)
 (cd replay-renderer && nix fmt)

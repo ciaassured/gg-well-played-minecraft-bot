@@ -12,22 +12,23 @@
       protoc \
         --proto_path=${inputs.protocol}/proto \
         --python_out=generated \
-        ${inputs.protocol}/proto/jump/v1/jump.proto
+        ${inputs.protocol}/proto/yrush/v1/yrush.proto
       export PYTHONPATH="$PWD/src:$PWD/generated"
     '';
   in {
     checks = {
       package-build = trainerArtifacts.trainer;
 
-      container-entrypoint-smoke = pkgs.runCommand "jump-trainer-entrypoint-smoke" {} ''
-        ${trainerArtifacts.trainer}/bin/jump-trainer --help > help.txt
-        grep -q pipeline help.txt
-        grep -q capacity help.txt
+      container-entrypoint-smoke = pkgs.runCommand "yrush-trainer-entrypoint-smoke" {} ''
+        ${trainerArtifacts.trainer}/bin/yrush-trainer --help > help.txt
+        grep -q canary help.txt
+        grep -q tuning-canary help.txt
+        grep -q proof help.txt
         touch "$out"
       '';
 
       tests =
-        pkgs.runCommand "minecraft-jump-trainer-tests" {
+        pkgs.runCommand "minecraft-yrush-trainer-tests" {
           nativeBuildInputs = [pkgs.protobuf trainerArtifacts.pythonEnv];
         } ''
           ${prepareSource}
@@ -36,34 +37,34 @@
         '';
 
       gymnasium-validation =
-        pkgs.runCommand "minecraft-jump-gymnasium-validation" {
+        pkgs.runCommand "minecraft-yrush-gymnasium-validation" {
           nativeBuildInputs = [pkgs.protobuf trainerArtifacts.pythonEnv];
         } ''
           ${prepareSource}
-          pytest -q tests/test_env.py::test_gymnasium_checker_and_terminal_observation
+          pytest -q tests/test_env.py::test_exact_spaces_and_gymnasium_contract
           touch "$out"
         '';
 
-      deterministic-mock-training =
-        pkgs.runCommand "minecraft-jump-mock-training" {
+      ppo-update =
+        pkgs.runCommand "minecraft-yrush-ppo-update" {
           nativeBuildInputs = [pkgs.protobuf trainerArtifacts.pythonEnv];
         } ''
           ${prepareSource}
-          pytest -q tests/test_mock_training.py
+          pytest -q tests/test_policy.py
           touch "$out"
         '';
 
       typing =
-        pkgs.runCommand "minecraft-jump-trainer-typing" {
+        pkgs.runCommand "minecraft-yrush-trainer-typing" {
           nativeBuildInputs = [pkgs.protobuf trainerArtifacts.pythonEnv];
         } ''
           ${prepareSource}
-          mypy src/jump_trainer
+          mypy src/yrush_trainer
           touch "$out"
         '';
 
       lint =
-        pkgs.runCommand "minecraft-jump-trainer-lint" {
+        pkgs.runCommand "minecraft-yrush-trainer-lint" {
           nativeBuildInputs = [pkgs.ruff];
         } ''
           cp -R ${../.} source
@@ -75,17 +76,17 @@
         '';
 
       protocol-generation =
-        pkgs.runCommand "minecraft-jump-python-protocol" {
+        pkgs.runCommand "minecraft-yrush-python-protocol" {
           nativeBuildInputs = [pkgs.protobuf trainerArtifacts.pythonEnv];
         } ''
           mkdir -p generated
           protoc \
             --proto_path=${inputs.protocol}/proto \
             --python_out=generated \
-            ${inputs.protocol}/proto/jump/v1/jump.proto
-          test -f generated/jump/v1/jump_pb2.py
+            ${inputs.protocol}/proto/yrush/v1/yrush.proto
+          test -f generated/yrush/v1/yrush_pb2.py
           PYTHONPATH=generated python -c \
-            'from jump.v1 import jump_pb2 as p; assert p.WireMessage().protocol_version == 0'
+            'from yrush.v1 import yrush_pb2 as p; assert p.WireMessage().protocol_version == 0'
           touch "$out"
         '';
     };

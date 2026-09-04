@@ -1,5 +1,5 @@
 {
-  description = "SB3 DQN trainer for the Minecraft one-block jump benchmark";
+  description = "Stable-Baselines3 PPO trainer for shared Minecraft YRush rounds";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/ffb3c9b700e759be2ef13237c9d8f953b32a1e46";

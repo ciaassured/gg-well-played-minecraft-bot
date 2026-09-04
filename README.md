@@ -1,83 +1,157 @@
-# Minecraft ML Bot
+# Minecraft YRush PPO
 
-This repository trains one Stable-Baselines3 DQN from concurrent Minecraft
-actors. One Paper process owns authoritative episode state and gives each
-player a lazily built, isolated arena lane. Persistent Fabric/HeadlessMC clients
-bridge one trainer connection each, and the Python coordinator batches policy
-inference while a spawned learner overlaps replay-buffer updates with
-collection.
+This repository trains one feed-forward Stable-Baselines3 PPO policy while a
+fixed pool of Fabric/HeadlessMC clients competes in the same YRush rounds on
+exactly one Paper server. The server owns the ordinary generated world and
+round lifecycle; the trainer never starts or resets Minecraft.
 
-New runs contain checkpoints and metrics only. Replay Mod is no longer loaded
-and protocol v3 has no recording lifecycle. The unchanged `replay-renderer/`
-and any existing `.mcpr` files remain available for historical recordings.
+The components communicate only through explicit boundaries:
+
+- `protocol/` defines the intentionally incompatible `yrush.v1` trainer/client
+  Protobuf contract.
+- `yrush-server/` packages Paper 26.2 and pinned YRush v1.3.1.
+- `client-mod/` bridges YRush's JSON channel to one trainer endpoint per
+  persistent client.
+- `trainer/` owns Gymnasium semantics, PPO collection, evaluation, and durable
+  artifacts.
+- `replay-renderer/` remains available for retained historical recordings.
 
 ## Local startup
 
-Run these in separate terminals from the repository root:
+Start one process per terminal, in this order:
 
 ```console
-nix run ./benchmark-server#server
+YRUSH_EXPECTED_CLIENT_COUNT=1 nix run ./yrush-server#server
 nix run ./client-mod#headless
-nix run ./trainer#smoke
+nix run ./trainer#smoke -- --rounds 2
 ```
 
-The local fallback uses Paper at `127.0.0.1:25565` and one trainer endpoint at
-`127.0.0.1:64123`. The client listener remains loopback-only unless
-`JUMP_TRAINER_BIND` is explicitly changed.
+The defaults use Paper at `127.0.0.1:25565` and the trainer listener at
+`127.0.0.1:64123`. The listener stays loopback-only unless
+`YRUSH_TRAINER_BIND` is changed. For multiple local clients, give each process
+a distinct `YRUSH_CLIENT_RUNTIME`, `YRUSH_TRAINER_PORT`, and
+`YRUSH_CLIENT_USERNAME`, then pass every endpoint to the trainer.
 
-Train one or more clients with repeatable endpoints:
+The server waits for exactly `YRUSH_EXPECTED_CLIENT_COUNT` players before it
+issues `yrush start training`. Any later departure is a fixed-pool failure and
+aborts an active trainer command.
+
+## Kubernetes farm
+
+[`deploy/kubernetes/yrush-farm.yaml`](deploy/kubernetes/yrush-farm.yaml)
+contains one server Deployment and stable Service, a parallel client
+StatefulSet, a separate artifacts claim, and suspended bounded trainer Jobs.
+Before applying it:
+
+1. Replace every `REPLACE_WITH_COMMIT` image tag with the same published full
+   commit revision.
+   Replace each `REPLACE_WITH_RUN_ID` with a unique suffix as well.
+2. Label an appropriate node `yrush.gg/local-ssd=true`. That label is the
+   operator's assertion that Kubernetes ephemeral storage is backed by local
+   SSD.
+3. Keep the server's expected count, maximum players, client replicas, endpoint
+   count, and trainer expected count consistent if changing the default pool
+   of four.
+4. Set the chosen world seed and resource sizes.
+
+Apply the farm and wait for the clients and server:
 
 ```console
-nix run ./trainer#train -- \
-  --endpoint 127.0.0.1:64123 \
-  --timesteps 30000 \
-  --validation-interval 5000 \
-  --validation-episodes 20
+kubectl apply -f deploy/kubernetes/yrush-farm.yaml
+kubectl rollout status deployment/yrush-paper --timeout=15m
+kubectl rollout status statefulset/yrush-client --timeout=15m
 ```
 
-Kubernetes uses a StatefulSet endpoint template and a unique run ID:
+The Paper Service uses `publishNotReadyAddresses: true` so clients can join
+while the entrypoint is still waiting for the complete pool. Server readiness
+is not published until Paper is ready, all expected clients are present, and
+YRush training mode has launched with that participant count.
+
+The server mounts a disk-backed `emptyDir` at `/data`, requests `20Gi` of
+ephemeral storage, and has a `50Gi` limit. World data, region files, Paper
+caches, plugin state, and logs all live there; there is deliberately no server
+volume claim. `/artifacts` is a separate persistent claim used only by trainer
+Jobs. Keep the server pod alive across the bounded stages so its generated
+chunks remain warm.
+
+Before each trainer Job, capture the live server identity and verify it has not
+changed:
 
 ```console
-jump-trainer pipeline \
-  --endpoint-template 'jump-client-{index}.jump-clients:64123' \
-  --clients 2 \
+kubectl get pod -l app.kubernetes.io/name=yrush-paper \
+  -o jsonpath='{.items[0].metadata.uid}{" "}{.items[0].status.containerStatuses[0].restartCount}{"\n"}'
+```
+
+Put those two values into the `yrush-run-metadata` ConfigMap before each stage;
+the suspended Jobs read it only when their pods are created. Unsuspend and wait
+for each stage in order:
+
+```console
+kubectl patch configmap yrush-run-metadata --type=merge \
+  -p '{"data":{"YRUSH_SERVER_POD_UID":"<observed-uid>","YRUSH_SERVER_RESTART_COUNT":"<observed-count>"}}'
+kubectl patch job yrush-canary --type=merge -p '{"spec":{"suspend":false}}'
+kubectl wait --for=condition=complete job/yrush-canary --timeout=30m
+kubectl patch job yrush-tuning-canary --type=merge -p '{"spec":{"suspend":false}}'
+kubectl wait --for=condition=complete job/yrush-tuning-canary --timeout=90m
+kubectl patch job yrush-proof --type=merge -p '{"spec":{"suspend":false}}'
+kubectl wait --for=condition=complete job/yrush-proof --timeout=4h
+```
+
+The stages run one update/two evaluation rounds, four updates/four rounds, and
+twelve updates/eight rounds respectively. A stage fails on pool loss, server
+restart metadata, invalid action cadence, a missing update, entropy collapse,
+or excessive KL. Re-read the server pod UID and restart count between stages.
+Also inspect the server's `YRUSH_METRIC` log records for `/data` usage, world
+growth, and round-preparation latency, plus Paper's TPS output. Revise the
+ephemeral-storage request and limit from those measurements before a long run.
+
+After all three bounded stages pass, create the final long command yourself
+with a new run ID and the desired update/evaluation budget. For example, from a
+trainer container with the same endpoints and `/artifacts` claim:
+
+```console
+yrush-trainer train \
+  --endpoint-template 'yrush-client-{index}.yrush-clients:64123' \
+  --clients 4 \
   --pool-startup-timeout 900 \
   --run-root /artifacts/runs \
-  --run-id <unique-id> \
-  --timesteps 30000 \
-  --validation-interval 5000 \
-  --validation-episodes 20 \
-  --evaluation-episodes 100
+  --run-id <unique-long-run-id> \
+  --updates <chosen-update-count> \
+  --evaluation-rounds <chosen-round-count>
 ```
 
-`--timesteps` is an aggregate transition budget across the complete pool. An
-action boundary can overshoot by at most the number of in-flight clients; both
-requested and actual counts are reported. Every configured client is required
-for the entire command.
+## Training and inference
 
-Other pool-aware commands are:
+The local bounded stages use the same commands as the farm:
 
 ```console
-nix run ./trainer#capacity -- --transitions 2000
-nix run ./trainer#evaluate -- --checkpoint <checkpoint.zip> --episodes 100
-nix run ./trainer#run -- --run <run-directory>
+nix run ./trainer#canary -- --run-id <unique-id>
+nix run ./trainer#tuning-canary -- --run-id <unique-id>
+nix run ./trainer#proof -- --run-id <unique-id>
 ```
 
-`capacity` uses the same actor/inference coordinator with no learner. `smoke`
-runs the showcase episode concurrently on every endpoint. Validation and
-evaluation assign each fixed seed exactly once and sort reports by seed.
+Every trainer command accepts repeated `--endpoint HOST:PORT` arguments or an
+`--endpoint-template ... --clients N` pair. A rollout contains 256 valid
+transitions per client from one frozen policy version. Optimization overlaps
+continued play, whose transitions are discarded, and a completed policy can
+switch only for the whole pool at a global round boundary.
 
-## Run artifacts
+Deterministic evaluation ranks candidates by global completion rate, then mean
+completion time, then best remaining target distance in draws:
 
-Named cluster runs are written to `/artifacts/runs/<run-id>/` and refuse to
-overwrite an existing ID. Local unnamed runs default to timestamped directories
-beneath `trainer/runs/`:
+```console
+nix run ./trainer#evaluate -- \
+  --checkpoint <checkpoint.zip> --rounds 8
+nix run ./trainer#run -- --run <run-directory> --rounds 1
+```
+
+Run artifacts are written under `/artifacts/runs/<run-id>/` in Kubernetes and
+`trainer/runs/` locally:
 
 ```text
 <run-id>/
 |-- config.json
 |-- versions.json
-|-- promotion-history.json
 |-- checkpoints/
 |   |-- untrained.zip
 |   |-- latest.zip
@@ -85,13 +159,14 @@ beneath `trainer/runs/`:
 |   |-- candidates/
 |   `-- promoted/
 `-- metrics/
+    |-- rounds.jsonl
+    |-- ppo-updates.jsonl
+    |-- evaluation-policy-*.json
+    `-- summary.json
 ```
 
-Reports include deployment revisions, endpoints and ordinals, requested and
-actual transitions, update counts, learner backlog/policy lag, per-client
-results, action-latency percentiles, tick cadence, throughput, and failures.
-SIGTERM stops collection, requests `latest.zip`, atomically records the
-interruption, and exits nonzero.
+Archives embed the protocol and space definitions, normalization metadata,
+deployment revision, fixed client count, server identity, and world seed.
 
 ## Reproducible builds
 
@@ -100,8 +175,8 @@ Every subproject remains independently buildable and checkable:
 ```console
 nix build ./protocol
 nix flake check ./protocol
-nix build ./benchmark-server
-nix flake check ./benchmark-server
+nix build ./yrush-server
+nix flake check ./yrush-server
 nix build ./client-mod
 nix flake check ./client-mod
 nix build ./trainer
@@ -110,39 +185,26 @@ nix build ./replay-renderer
 nix flake check ./replay-renderer
 ```
 
-Formatting is also project-local:
+Formatting is project-local:
 
 ```console
 (cd protocol && nix fmt)
-(cd benchmark-server && nix fmt)
+(cd yrush-server && nix fmt)
 (cd client-mod && nix fmt)
 (cd trainer && nix fmt)
 (cd replay-renderer && nix fmt)
 ```
 
-Only the deployable server, client, and trainer flakes produce images. Each
-exposes its independent `#oci` archive through the same component-local image
-app:
+The deployable components expose independent OCI archives and image helpers:
 
 ```console
-nix run ./benchmark-server#image
+nix run ./yrush-server#image
 nix run ./client-mod#image
 nix run ./trainer#image
 ```
 
-Those commands create `result-server-image`, `result-client-image`, and
-`result-trainer-image` links. To prove an image in the local Podman store, run
-the corresponding command with `-- load <tag>`; set
-`JUMP_LOCAL_IMAGE_TRANSPORT=docker-daemon` to target Docker instead.
-
-After every successful flake-check workflow, the separate image workflow calls
-the same apps to pre-build all three archives before publishing any of them,
-then calls `#image -- publish <full-commit>` for each component. This keeps
-GitHub as the normal coordinated image builder and publisher while making its
-exact build path available locally. A developer with `GHCR_USER` and
-`GHCR_TOKEN` may invoke the publish action directly for a short-lived cluster
-test tag.
-
-Each GHCR package must be made public once in its package settings; that
-visibility then applies to later versions. GitOps manifests pin immutable
-digests and upgrade the intentionally incompatible protocol-v3 images together.
+These create `result-server-image`, `result-client-image`, and
+`result-trainer-image`. Use `#image -- load <tag>` for Podman, or set
+`YRUSH_LOCAL_IMAGE_TRANSPORT=docker-daemon` for Docker. CI builds all three
+archives before publishing the same immutable commit tag. Upgrade the
+coordinated `yrush.v1` server, client, and trainer images together.

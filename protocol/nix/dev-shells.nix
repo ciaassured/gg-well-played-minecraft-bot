@@ -9,7 +9,7 @@
         pkgs.python3
       ];
       shellHook = ''
-        echo "jump protocol development shell (Buf + protoc)"
+        echo "YRush protocol development shell (Buf + protoc)"
       '';
     };
   };

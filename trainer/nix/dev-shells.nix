@@ -25,9 +25,9 @@
         protoc \
           --proto_path="$PROTOCOL_DIR/proto" \
           --python_out="$generated" \
-          "$PROTOCOL_DIR/proto/jump/v1/jump.proto"
+          "$PROTOCOL_DIR/proto/yrush/v1/yrush.proto"
         export PYTHONPATH="$trainer_root/src:$generated''${PYTHONPATH:+:$PYTHONPATH}"
-        echo "Minecraft jump trainer shell (Python 3.13, Gymnasium 1.3.0, SB3 2.9.0)"
+        echo "YRush trainer shell (Python 3.13, Gymnasium 1.3.0, SB3 PPO 2.9.0)"
       '';
     };
   };

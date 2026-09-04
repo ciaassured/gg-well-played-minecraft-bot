@@ -1,97 +1,152 @@
-"""Deterministic in-memory benchmark connection for Gymnasium tests."""
-
 from __future__ import annotations
 
-from jump.v1 import jump_pb2 as pb
+from dataclasses import dataclass
+from typing import Any
 
-from jump_trainer.errors import InfrastructureError
-from jump_trainer.messages import RawObservation
+import numpy as np
+from yrush.v1 import yrush_pb2 as pb
+
+from yrush_trainer.config import OBSERVATION_FEATURES, VOXEL_FEATURES
+from yrush_trainer.messages import RawObservation, RoundResult
+from yrush_trainer.wire import StepExchange
 
 
-def observation(
+def raw_observation(
     *,
-    episode_id: int = 10,
+    round_sequence: int = 1,
+    policy_version: int = 0,
     sequence: int = 0,
-    elapsed_ticks: int = 0,
-    distance: float = 6.0,
-    phase: int = pb.EPISODE_PHASE_READY,
-    terminal_reason: int = pb.TERMINAL_REASON_UNSPECIFIED,
-    on_ground: bool = True,
+    target_difference: float = 12.0,
+    phase: int = pb.ROUND_PHASE_ACTIVE,
+    client_tick: int = 100,
+    active_players: int = 2,
+    total_players: int = 2,
 ) -> RawObservation:
     return RawObservation(
-        session_id="test-session",
-        episode_id=episode_id,
-        client_tick=100 + elapsed_ticks,
-        server_tick=200 + elapsed_ticks,
+        session_id="session",
+        round_sequence=round_sequence,
+        policy_version=policy_version,
+        client_tick=client_tick,
         observation_sequence=sequence,
         action_sequence=sequence,
         phase=phase,
-        terminal_reason=terminal_reason,
-        signed_wall_distance=distance,
-        relative_feet_height=0.0,
+        block_properties=bytes([0, 1, 0, 1] * (VOXEL_FEATURES // 4)),
+        signed_target_height_difference=target_difference,
+        forward_velocity=0.1,
+        strafe_velocity=-0.1,
         vertical_velocity=0.0,
-        lane_velocity=0.2,
-        on_ground=on_ground,
-        elapsed_ticks=elapsed_ticks,
+        fractional_x=0.25,
+        fractional_y=0.5,
+        fractional_z=0.75,
+        grounded=True,
+        remaining_time_fraction=0.8,
+        yaw_residual_degrees=10.0,
+        pitch_degrees=-20.0,
+        health_fraction=1.0,
+        air_fraction=1.0,
+        active_players=active_players,
+        total_players=total_players,
     )
 
 
-class SimulatedConnection:
-    """Small deterministic episode: a jump succeeds; three no-ops miss."""
+def round_result(
+    *,
+    round_sequence: int = 1,
+    policy_version: int = 0,
+    outcome: int = pb.PLAYER_OUTCOME_WON,
+    participant_count: int = 2,
+    winner_uuid: str = "player-0",
+    sequence: int = 1,
+) -> RoundResult:
+    return RoundResult(
+        session_id="session",
+        round_sequence=round_sequence,
+        policy_version=policy_version,
+        client_tick=104,
+        observation_sequence=sequence,
+        outcome=outcome,
+        winner_uuid=winner_uuid,
+        participant_count=participant_count,
+        completion_time_seconds=12.5,
+        best_remaining_target_distance=0.1,
+    )
 
-    def __init__(self) -> None:
-        self.session_id = "test-session"
-        self.current_episode_id = 0
-        self.elapsed_ticks = 0
-        self.distance = 6.0
-        self.jumped = False
+
+class FakeConnection:
+    def __init__(self, outcomes: list[int] | None = None) -> None:
+        self.player_uuid = "player-0"
+        self.player_name = "player-zero"
+        self.outcomes = list(outcomes or [pb.PLAYER_OUTCOME_WON])
+        self.round_sequence = 0
+        self.policy_version = 0
+        self.sequence = 0
         self.closed = False
-        self.fail_next_step = False
-        self.reset_seeds: list[int] = []
-        self.actions: list[int] = []
 
-    def reset(self, request_id: int, episode_id: int, seed: int, retries: int) -> RawObservation:
+    def arm(self, *, request_id: int, round_sequence: int, policy_version: int) -> RawObservation:
         assert request_id > 0
-        assert retries > 0
-        self.current_episode_id = episode_id
-        self.elapsed_ticks = 0
-        self.distance = 6.0
-        self.jumped = False
-        self.reset_seeds.append(seed)
-        return observation(episode_id=episode_id)
+        self.round_sequence = round_sequence
+        self.policy_version = policy_version
+        self.sequence = 0
+        return raw_observation(
+            round_sequence=round_sequence,
+            policy_version=policy_version,
+            sequence=0,
+        )
 
-    def step(self, previous: RawObservation, action_sequence: int, action: int) -> RawObservation:
-        if self.fail_next_step:
-            self.fail_next_step = False
-            raise InfrastructureError("scripted transport failure")
-        assert previous.episode_id == self.current_episode_id
-        assert action_sequence == previous.action_sequence + 1
-        self.actions.append(action)
-        self.elapsed_ticks += 1
-        self.distance -= 0.2
-        self.jumped = self.jumped or action == pb.ACTION_JUMP
-        terminal = self.jumped or self.elapsed_ticks >= 3
-        reason = (
-            pb.TERMINAL_REASON_SUCCESS
-            if terminal and self.jumped
-            else pb.TERMINAL_REASON_MISSED_JUMP
-            if terminal
-            else pb.TERMINAL_REASON_UNSPECIFIED
-        )
-        return observation(
-            episode_id=self.current_episode_id,
+    def step(
+        self, previous: RawObservation, action_sequence: int, action: list[int]
+    ) -> StepExchange:
+        assert len(action) == 6
+        self.sequence = action_sequence
+        outcome = self.outcomes[0]
+        terminal = action_sequence >= 2
+        observation = raw_observation(
+            round_sequence=self.round_sequence,
+            policy_version=self.policy_version,
             sequence=action_sequence,
-            elapsed_ticks=self.elapsed_ticks,
-            distance=self.distance,
-            phase=pb.EPISODE_PHASE_TERMINAL if terminal else pb.EPISODE_PHASE_ACTIVE,
-            terminal_reason=reason,
-            on_ground=terminal,
+            target_difference=previous.signed_target_height_difference - 0.5,
+            phase=pb.ROUND_PHASE_COMPLETE if terminal else pb.ROUND_PHASE_ACTIVE,
+            client_tick=previous.client_tick + 4,
         )
+        result = (
+            round_result(
+                round_sequence=self.round_sequence,
+                policy_version=self.policy_version,
+                outcome=outcome,
+                sequence=action_sequence,
+                winner_uuid="player-0" if outcome == pb.PLAYER_OUTCOME_WON else "",
+            )
+            if terminal
+            else None
+        )
+        return StepExchange(observation, result, True)
 
     def shutdown(self, request_id: int, reason: str) -> None:
-        assert request_id > 0
-        assert reason
+        assert request_id > 0 and reason
         self.closed = True
 
     def close(self) -> None:
         self.closed = True
+
+
+@dataclass
+class StaticPolicy:
+    version: int = 0
+
+    def sample(self, observations: np.ndarray, *, deterministic: bool) -> Any:
+        del deterministic
+        from yrush_trainer.policy import PolicyBatch
+
+        count = observations.shape[0]
+        return PolicyBatch(
+            actions=np.tile(np.asarray([2, 1, 0, 0, 2, 2]), (count, 1)),
+            log_probabilities=np.zeros(count, dtype=np.float32),
+            values=np.zeros(count, dtype=np.float32),
+        )
+
+    def values(self, observations: np.ndarray) -> np.ndarray:
+        return np.zeros(observations.shape[0], dtype=np.float32)
+
+
+def normalized_observation(value: float = 0.0) -> np.ndarray:
+    return np.full(OBSERVATION_FEATURES, value, dtype=np.float32)

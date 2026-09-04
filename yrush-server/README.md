@@ -1,0 +1,46 @@
+# YRush server
+
+This project packages one Paper 26.2 process and the pinned YRush v1.3.1
+release. It uses a normal generated world and has no custom server plugin or
+Protobuf dependency.
+
+```console
+nix develop ./yrush-server
+nix build ./yrush-server
+nix build ./yrush-server#oci
+nix run ./yrush-server#image
+nix flake check ./yrush-server
+(cd yrush-server && nix fmt)
+nix run ./yrush-server#server
+```
+
+Mutable state defaults to `yrush-server/runtime` locally and `/data` in the
+image. Kubernetes mounts a disk-backed `emptyDir` there; Paper caches, the
+generated world, region files, plugin state, and logs therefore share the
+node's local ephemeral filesystem. No server volume claim is used.
+
+Configuration is external:
+
+- `YRUSH_EXPECTED_CLIENT_COUNT` is the immutable client-pool size.
+- `YRUSH_MAX_PLAYERS` must be at least that size.
+- `YRUSH_SERVER_XMS` and `YRUSH_SERVER_XMX` set the Java heap.
+- `YRUSH_WORLD_SEED` sets normal-world generation.
+- `YRUSH_STARTUP_TIMEOUT_SECONDS` bounds Paper startup and client arrival.
+- `YRUSH_SERVER_RUNTIME` relocates mutable state.
+- `YRUSH_FAIL_ON_CONTAINER_RESTART=1` makes a Kubernetes container restart
+  fail against the surviving `emptyDir` instead of silently reusing the world.
+
+After Paper is ready, the entrypoint waits until the online count exactly
+matches the expected pool, issues `yrush start training` once, verifies YRush
+accepted it with the full participant count, and then publishes `/data/ready`.
+Any later membership change removes readiness, stops the server, and causes all
+trainer connections to fail. Termination sends `yrush stop` before Paper's
+`stop` command.
+
+The server emits `YRUSH_METRIC` records for ephemeral disk use, world size, and
+round-preparation latency and requests Paper TPS output every ten seconds. Size
+the Kubernetes ephemeral-storage limit from those measurements.
+
+The `#image` app retains the generic server GHCR repository. Use `#image --
+load <tag>` for Podman, or set `YRUSH_LOCAL_IMAGE_TRANSPORT=docker-daemon` for
+Docker. The root README is the canonical orchestration guide.

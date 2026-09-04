@@ -1,5 +1,5 @@
 {
-  description = "Versioned Protobuf contract for the one-block jump benchmark";
+  description = "Versioned trainer-to-Fabric contract for YRush";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/ffb3c9b700e759be2ef13237c9d8f953b32a1e46";

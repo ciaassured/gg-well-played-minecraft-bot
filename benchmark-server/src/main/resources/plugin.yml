@@ -1,6 +1,0 @@
-name: JumpBenchmark
-version: 1.0.0
-main: gg.wellplayed.jump.server.JumpBenchmarkPlugin
-description: Authoritative one-block jump benchmark controller
-api-version: '26.2'
-author: gg-well-played

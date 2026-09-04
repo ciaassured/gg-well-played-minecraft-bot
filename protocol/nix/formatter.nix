@@ -1,7 +1,7 @@
 {...}: {
   perSystem = {pkgs, ...}: {
     formatter = pkgs.writeShellApplication {
-      name = "format-jump-protocol";
+      name = "format-yrush-protocol";
       runtimeInputs = [pkgs.alejandra pkgs.buf];
       text = ''
         target="''${1:-.}"

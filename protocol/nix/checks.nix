@@ -1,7 +1,7 @@
 {...}: {
   perSystem = {pkgs, ...}: {
     checks.schema =
-      pkgs.runCommand "jump-protocol-check" {
+      pkgs.runCommand "yrush-protocol-check" {
         nativeBuildInputs = [pkgs.buf pkgs.protobuf pkgs.python3];
         src = ../.;
       } ''
@@ -16,7 +16,7 @@
           --proto_path=proto \
           --include_imports \
           --descriptor_set_out=descriptor.binpb \
-          proto/jump/v1/jump.proto
+          proto/yrush/v1/yrush.proto
         python3 tests/validate_schema.py
         touch "$out"
       '';

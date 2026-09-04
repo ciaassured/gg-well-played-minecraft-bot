@@ -1,7 +1,7 @@
 {...}: {
   perSystem = {pkgs, ...}: {
     formatter = pkgs.writeShellApplication {
-      name = "format-minecraft-jump-trainer";
+      name = "format-minecraft-yrush-trainer";
       runtimeInputs = [pkgs.alejandra pkgs.ruff pkgs.taplo];
       text = ''
         target="''${1:-.}"

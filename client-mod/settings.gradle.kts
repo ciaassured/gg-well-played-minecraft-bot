@@ -6,4 +6,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = "jump-benchmark-client"
+rootProject.name = "yrush-client"

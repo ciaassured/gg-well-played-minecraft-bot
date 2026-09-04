@@ -18,8 +18,12 @@
       url = "https://repo.maven.apache.org/maven2/com/google/protobuf/protobuf-java/4.35.1/protobuf-java-4.35.1.jar";
       hash = "sha256-pDRboqoAmRL/b5BGf+otEEYFJWtyxQhA118TJWY4pHI=";
     };
+    gsonJava = pkgs.fetchurl {
+      url = "https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.14.0/gson-2.14.0.jar";
+      hash = "sha256-LL0Rm/GWHCh4gxCWPcgLpl9Yze7B3ROci9sSQPqiw28=";
+    };
     clientMod = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
-      pname = "jump-benchmark-client-mod";
+      pname = "yrush-client-mod";
       version = "1.0.0";
       src = ../.;
 
@@ -37,9 +41,9 @@
 
       installPhase = ''
         runHook preInstall
-        mkdir -p "$out/share/jump-benchmark-client"
-        cp build/libs/jump-benchmark-client-1.0.0.jar \
-          "$out/share/jump-benchmark-client/jump-benchmark-client.jar"
+        mkdir -p "$out/share/yrush-client"
+        cp build/libs/yrush-client-1.0.0.jar \
+          "$out/share/yrush-client/yrush-client.jar"
         runHook postInstall
       '';
     });
@@ -75,25 +79,25 @@
       '';
     });
     containerEntrypoint = pkgs.writeShellApplication {
-      name = "jump-client-container";
+      name = "yrush-client-container";
       runtimeInputs = [pkgs.coreutils pkgs.jdk25_headless];
       text = ''
-        runtime_dir="''${JUMP_CLIENT_RUNTIME:-/runtime}"
+        runtime_dir="''${YRUSH_CLIENT_RUNTIME:-/runtime}"
         game_dir="$runtime_dir/game"
-        readiness_file="''${JUMP_CLIENT_READINESS_FILE:-$runtime_dir/ready}"
-        paper_address="''${JUMP_PAPER_ADDRESS:-jump-paper:25565}"
-        trainer_bind="''${JUMP_TRAINER_BIND:-0.0.0.0}"
-        trainer_port="''${JUMP_TRAINER_PORT:-64123}"
-        client_xms="''${JUMP_CLIENT_XMS:-192m}"
-        client_xmx="''${JUMP_CLIENT_XMX:-320m}"
-        pod_name="''${POD_NAME:-jump-client-0}"
+        readiness_file="''${YRUSH_CLIENT_READINESS_FILE:-$runtime_dir/ready}"
+        paper_address="''${YRUSH_PAPER_ADDRESS:-yrush-paper:25565}"
+        trainer_bind="''${YRUSH_TRAINER_BIND:-0.0.0.0}"
+        trainer_port="''${YRUSH_TRAINER_PORT:-64123}"
+        client_xms="''${YRUSH_CLIENT_XMS:-192m}"
+        client_xmx="''${YRUSH_CLIENT_XMX:-320m}"
+        pod_name="''${POD_NAME:-yrush-client-0}"
         ordinal="''${pod_name##*-}"
         if [[ ! "$ordinal" =~ ^[0-9]+$ ]]; then
           echo "cannot derive StatefulSet ordinal from $pod_name" >&2
           exit 2
         fi
-        client_username="''${JUMP_CLIENT_USERNAME:-jumpbot-$ordinal}"
-        if [[ "''${JUMP_ENTRYPOINT_VALIDATE:-0}" == 1 ]]; then
+        client_username="''${YRUSH_CLIENT_USERNAME:-yrushbot-$ordinal}"
+        if [[ "''${YRUSH_ENTRYPOINT_VALIDATE:-0}" == 1 ]]; then
           printf 'username=%s bind=%s:%s paper=%s readiness=%s\n' \
             "$client_username" "$trainer_bind" "$trainer_port" "$paper_address" "$readiness_file"
           exit 0
@@ -102,8 +106,8 @@
         mkdir -p "$runtime_dir/HeadlessMC" "$game_dir/config" "$game_dir/mods"
         rm -f "$readiness_file" "$readiness_file.tmp"
         cp -f ${headlessMc} "$runtime_dir/headlessmc.jar"
-        ln -sfn ${clientMod}/share/jump-benchmark-client/jump-benchmark-client.jar \
-          "$game_dir/mods/jump-benchmark-client.jar"
+        ln -sfn ${clientMod}/share/yrush-client/yrush-client.jar \
+          "$game_dir/mods/yrush-client.jar"
         ln -sfn ${fabricApi} "$game_dir/mods/fabric-api.jar"
         ln -sfn ${hmcOptimizations}/share/hmc-optimizations/hmc-optimizations.jar \
           "$game_dir/mods/hmc-optimizations.jar"
@@ -137,7 +141,7 @@
         export ALSOFT_DRIVERS=null SDL_AUDIODRIVER=dummy OPENAL_SOFT_LOGLEVEL=0
         cd "$runtime_dir"
         game_args=("$@")
-        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Dhmc.optimizations.enabled=true -Dhmc.optimizations.render=true -Dhmc.optimizations.world_render_state=true -Dhmc.optimizations.particles=true -Dhmc.optimizations.sound=true -Dhmc.optimizations.lighting=true -Dhmc.optimizations.animated_textures=true -Dhmc.optimizations.chunk_mesh=true -Dhmc.optimizations.render_buffers=true -Dhmc.optimizations.render_resources=true -Djump.client.offline=true -Djump.client.bind=$trainer_bind -Djump.client.port=$trainer_port -Djump.client.server=$paper_address -Djump.client.readinessFile=$readiness_file -Xms$client_xms -Xmx$client_xmx\" --game-args \"''${game_args[*]}\""
+        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Dhmc.optimizations.enabled=true -Dhmc.optimizations.render=true -Dhmc.optimizations.world_render_state=true -Dhmc.optimizations.particles=true -Dhmc.optimizations.sound=true -Dhmc.optimizations.lighting=true -Dhmc.optimizations.animated_textures=true -Dhmc.optimizations.chunk_mesh=true -Dhmc.optimizations.render_buffers=true -Dhmc.optimizations.render_resources=true -Dyrush.client.offline=true -Dyrush.client.bind=$trainer_bind -Dyrush.client.port=$trainer_port -Dyrush.client.server=$paper_address -Dyrush.client.readinessFile=$readiness_file -Xms$client_xms -Xmx$client_xmx\" --game-args \"''${game_args[*]}\""
         printf '%s\n' "$command_line" | java -Dhmc.fileloglevel=INFO \
           --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
       '';
@@ -148,17 +152,17 @@
       maxLayers = 120;
       contents = [containerEntrypoint pkgs.cacert];
       config = {
-        Entrypoint = ["${containerEntrypoint}/bin/jump-client-container"];
+        Entrypoint = ["${containerEntrypoint}/bin/yrush-client-container"];
         WorkingDir = "/runtime";
         Env = [
           "PATH=${pkgs.lib.makeBinPath [pkgs.coreutils pkgs.jdk25_headless]}"
-          "JUMP_CLIENT_RUNTIME=/runtime"
-          "JUMP_CLIENT_READINESS_FILE=/runtime/ready"
-          "JUMP_PAPER_ADDRESS=jump-paper:25565"
-          "JUMP_TRAINER_BIND=0.0.0.0"
-          "JUMP_TRAINER_PORT=64123"
-          "JUMP_CLIENT_XMS=192m"
-          "JUMP_CLIENT_XMX=320m"
+          "YRUSH_CLIENT_RUNTIME=/runtime"
+          "YRUSH_CLIENT_READINESS_FILE=/runtime/ready"
+          "YRUSH_PAPER_ADDRESS=yrush-paper:25565"
+          "YRUSH_TRAINER_BIND=0.0.0.0"
+          "YRUSH_TRAINER_PORT=64123"
+          "YRUSH_CLIENT_XMS=192m"
+          "YRUSH_CLIENT_XMX=320m"
         ];
       };
     };
@@ -174,7 +178,16 @@
     };
 
     _module.args.clientArtifacts = {
-      inherit clientMod containerEntrypoint fabricApi headlessMc hmcOptimizations oci protobufJava;
+      inherit
+        clientMod
+        containerEntrypoint
+        fabricApi
+        gsonJava
+        headlessMc
+        hmcOptimizations
+        oci
+        protobufJava
+        ;
     };
   };
 }

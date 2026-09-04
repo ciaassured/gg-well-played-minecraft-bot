@@ -17,7 +17,7 @@
         pytest
       ]));
     trainer = pythonPackages.buildPythonApplication {
-      pname = "minecraft-jump-trainer";
+      pname = "minecraft-yrush-trainer";
       version = "1.0.0";
       pyproject = true;
       src = ../.;
@@ -31,16 +31,16 @@
         protoc \
           --proto_path=${inputs.protocol}/proto \
           --python_out=src \
-          ${inputs.protocol}/proto/jump/v1/jump.proto
+          ${inputs.protocol}/proto/yrush/v1/yrush.proto
       '';
 
       doCheck = false;
       pythonImportsCheck = [
-        "jump_trainer"
-        "jump.v1.jump_pb2"
+        "yrush_trainer"
+        "yrush.v1.yrush_pb2"
       ];
 
-      meta.mainProgram = "jump-trainer";
+      meta.mainProgram = "yrush-trainer";
     };
     oci = pkgs.dockerTools.buildLayeredImage {
       name = "ghcr.io/ciaassured/gg-well-played-minecraft-bot-trainer";
@@ -48,13 +48,13 @@
       maxLayers = 120;
       contents = [trainer pkgs.cacert];
       config = {
-        Entrypoint = ["${trainer}/bin/jump-trainer"];
+        Entrypoint = ["${trainer}/bin/yrush-trainer"];
         WorkingDir = "/artifacts";
         Env = [
-          "USER=jump-trainer"
-          "JUMP_TRAINER_RUN_ROOT=/artifacts/runs"
-          "JUMP_TRAINER_OUTPUT_ROOT=/artifacts/evaluations"
-          "JUMP_POOL_STARTUP_TIMEOUT=900"
+          "USER=yrush-trainer"
+          "YRUSH_TRAINER_RUN_ROOT=/artifacts/runs"
+          "YRUSH_TRAINER_OUTPUT_ROOT=/artifacts/evaluations"
+          "YRUSH_POOL_STARTUP_TIMEOUT=900"
         ];
       };
     };

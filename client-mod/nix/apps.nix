@@ -5,30 +5,31 @@
     ...
   }: let
     launcher = pkgs.writeShellApplication {
-      name = "jump-benchmark-headless";
+      name = "yrush-headless";
       runtimeInputs = [pkgs.coreutils pkgs.jdk25_headless];
       text = ''
-        runtime_dir="''${JUMP_CLIENT_RUNTIME:-$PWD/client-mod/runtime/client}"
+        runtime_dir="''${YRUSH_CLIENT_RUNTIME:-$PWD/client-mod/runtime/client}"
         game_dir="$runtime_dir/game"
-        readiness_file="''${JUMP_CLIENT_READINESS_FILE:-$runtime_dir/ready}"
-        paper_address="''${JUMP_PAPER_ADDRESS:-127.0.0.1:25565}"
-        trainer_bind="''${JUMP_TRAINER_BIND:-127.0.0.1}"
-        trainer_port="''${JUMP_TRAINER_PORT:-64123}"
-        client_xms="''${JUMP_CLIENT_XMS:-192m}"
-        client_xmx="''${JUMP_CLIENT_XMX:-320m}"
-        pod_name="''${POD_NAME:-''${HOSTNAME:-jump-client-0}}"
+        readiness_file="''${YRUSH_CLIENT_READINESS_FILE:-$runtime_dir/ready}"
+        paper_address="''${YRUSH_PAPER_ADDRESS:-127.0.0.1:25565}"
+        trainer_bind="''${YRUSH_TRAINER_BIND:-127.0.0.1}"
+        trainer_port="''${YRUSH_TRAINER_PORT:-64123}"
+        client_xms="''${YRUSH_CLIENT_XMS:-192m}"
+        client_xmx="''${YRUSH_CLIENT_XMX:-320m}"
+        pod_name="''${POD_NAME:-yrush-client-0}"
         ordinal="''${pod_name##*-}"
-        if [[ ! "$ordinal" =~ ^[0-9]+$ ]]; then
+        client_username="''${YRUSH_CLIENT_USERNAME:-}"
+        if [[ -z "$client_username" && ! "$ordinal" =~ ^[0-9]+$ ]]; then
           echo "cannot derive StatefulSet ordinal from $pod_name" >&2
           exit 2
         fi
-        client_username="''${JUMP_CLIENT_USERNAME:-jumpbot-$ordinal}"
+        client_username="''${client_username:-yrushbot-$ordinal}"
 
         mkdir -p "$runtime_dir/HeadlessMC" "$game_dir/config" "$game_dir/mods"
         rm -f "$readiness_file" "$readiness_file.tmp"
         cp -f ${clientArtifacts.headlessMc} "$runtime_dir/headlessmc.jar"
-        ln -sfn ${clientArtifacts.clientMod}/share/jump-benchmark-client/jump-benchmark-client.jar \
-          "$game_dir/mods/jump-benchmark-client.jar"
+        ln -sfn ${clientArtifacts.clientMod}/share/yrush-client/yrush-client.jar \
+          "$game_dir/mods/yrush-client.jar"
         ln -sfn ${clientArtifacts.fabricApi} "$game_dir/mods/fabric-api.jar"
         ln -sfn ${clientArtifacts.hmcOptimizations}/share/hmc-optimizations/hmc-optimizations.jar \
           "$game_dir/mods/hmc-optimizations.jar"
@@ -66,14 +67,14 @@
         export OPENAL_SOFT_LOGLEVEL=0
         cd "$runtime_dir"
         game_args=("$@")
-        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Dhmc.optimizations.enabled=true -Dhmc.optimizations.render=true -Dhmc.optimizations.world_render_state=true -Dhmc.optimizations.particles=true -Dhmc.optimizations.sound=true -Dhmc.optimizations.lighting=true -Dhmc.optimizations.animated_textures=true -Dhmc.optimizations.chunk_mesh=true -Dhmc.optimizations.render_buffers=true -Dhmc.optimizations.render_resources=true -Djump.client.offline=true -Djump.client.bind=$trainer_bind -Djump.client.port=$trainer_port -Djump.client.server=$paper_address -Djump.client.readinessFile=$readiness_file -Xms$client_xms -Xmx$client_xmx\" --game-args \"''${game_args[*]}\""
+        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Dhmc.optimizations.enabled=true -Dhmc.optimizations.render=true -Dhmc.optimizations.world_render_state=true -Dhmc.optimizations.particles=true -Dhmc.optimizations.sound=true -Dhmc.optimizations.lighting=true -Dhmc.optimizations.animated_textures=true -Dhmc.optimizations.chunk_mesh=true -Dhmc.optimizations.render_buffers=true -Dhmc.optimizations.render_resources=true -Dyrush.client.offline=true -Dyrush.client.bind=$trainer_bind -Dyrush.client.port=$trainer_port -Dyrush.client.server=$paper_address -Dyrush.client.readinessFile=$readiness_file -Xms$client_xms -Xmx$client_xmx\" --game-args \"''${game_args[*]}\""
         printf '%s\n' "$command_line" | java -Dhmc.fileloglevel=INFO \
           --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
       '';
     };
     imageCommand = import ./image-app.nix {
       inherit pkgs;
-      commandName = "jump-client-image";
+      commandName = "yrush-client-image";
       component = "client";
       imageArchive = clientArtifacts.oci;
       imageName = "ghcr.io/ciaassured/gg-well-played-minecraft-bot-client";
@@ -81,17 +82,17 @@
   in {
     apps.headless = {
       type = "app";
-      program = "${launcher}/bin/jump-benchmark-headless";
-      meta.description = "Start one persistent Fabric benchmark client";
+      program = "${launcher}/bin/yrush-headless";
+      meta.description = "Start one persistent Fabric YRush client";
     };
     apps.default = {
       type = "app";
-      program = "${launcher}/bin/jump-benchmark-headless";
-      meta.description = "Start one persistent Fabric benchmark client";
+      program = "${launcher}/bin/yrush-headless";
+      meta.description = "Start one persistent Fabric YRush client";
     };
     apps.image = {
       type = "app";
-      program = "${imageCommand}/bin/jump-client-image";
+      program = "${imageCommand}/bin/yrush-client-image";
       meta.description = "Build, load, or publish the HeadlessMC client OCI image";
     };
   };

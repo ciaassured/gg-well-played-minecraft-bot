@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "id": "jump_benchmark_client",
+  "id": "yrush_client",
   "version": "${version}",
-  "name": "One-Block Jump Benchmark Client",
-  "description": "Tick-synchronous Fabric bridge between the Python trainer and Paper benchmark.",
+  "name": "YRush Client Bridge",
+  "description": "Five-hertz Fabric bridge between the PPO trainer and YRush.",
   "authors": ["gg-well-played"],
   "license": "AGPL-3.0-only",
   "environment": "client",
   "entrypoints": {
     "client": [
-      "gg.wellplayed.jump.client.JumpBenchmarkClient"
+      "gg.wellplayed.yrush.client.YRushClient"
     ]
   },
   "mixins": [
     {
-      "config": "jump_benchmark_client.mixins.json",
+      "config": "yrush_client.mixins.json",
       "environment": "client"
     }
   ],

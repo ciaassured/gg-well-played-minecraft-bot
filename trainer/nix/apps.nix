@@ -6,22 +6,22 @@
   }: let
     mkCommand = name: subcommand: let
       wrapper = pkgs.writeShellApplication {
-        name = "jump-trainer-${name}";
+        name = "yrush-trainer-${name}";
         runtimeInputs = [trainerArtifacts.trainer];
         text = ''
-          export JUMP_TRAINER_RUN_ROOT="''${JUMP_TRAINER_RUN_ROOT:-$PWD/trainer/runs}"
-          export JUMP_TRAINER_OUTPUT_ROOT="''${JUMP_TRAINER_OUTPUT_ROOT:-$PWD/trainer/evaluations}"
-          exec jump-trainer ${subcommand} "$@"
+          export YRUSH_TRAINER_RUN_ROOT="''${YRUSH_TRAINER_RUN_ROOT:-$PWD/trainer/runs}"
+          export YRUSH_TRAINER_OUTPUT_ROOT="''${YRUSH_TRAINER_OUTPUT_ROOT:-$PWD/trainer/evaluations}"
+          exec yrush-trainer ${subcommand} "$@"
         '';
       };
     in {
       type = "app";
-      program = "${wrapper}/bin/jump-trainer-${name}";
-      meta.description = "Run the Minecraft jump trainer ${subcommand} command";
+      program = "${wrapper}/bin/yrush-trainer-${name}";
+      meta.description = "Run the YRush trainer ${subcommand} command";
     };
     imageCommand = import ./image-app.nix {
       inherit pkgs;
-      commandName = "jump-trainer-image";
+      commandName = "yrush-trainer-image";
       component = "trainer";
       imageArchive = trainerArtifacts.oci;
       imageName = "ghcr.io/ciaassured/gg-well-played-minecraft-bot-trainer";
@@ -33,11 +33,12 @@
       evaluate = mkCommand "evaluate" "evaluate";
       run = mkCommand "run" "run";
       smoke = mkCommand "smoke" "smoke";
-      pipeline = mkCommand "pipeline" "pipeline";
-      capacity = mkCommand "capacity" "capacity";
+      canary = mkCommand "canary" "canary";
+      tuning-canary = mkCommand "tuning-canary" "tuning-canary";
+      proof = mkCommand "proof" "proof";
       image = {
         type = "app";
-        program = "${imageCommand}/bin/jump-trainer-image";
+        program = "${imageCommand}/bin/yrush-trainer-image";
         meta.description = "Build, load, or publish the trainer OCI image";
       };
     };
