@@ -342,7 +342,16 @@ class ClientPool:
                     raise InfrastructureError(f"unexpected client actor event: {item.kind}")
                 self._latencies[item.actor_index].append(item.latency_ms)
                 tick_delta = item.info.get("client_tick_delta")
-                if tick_delta is not None:
+                # The initial observation and first held action share their
+                # first tick callback, so their timestamps differ by three
+                # even though controls were applied for four complete ticks.
+                # Invalid terminal exchanges can also end a hold early. Keep
+                # cadence metrics limited to comparable steady-state actions.
+                if (
+                    tick_delta is not None
+                    and bool(item.info.get("valid_transition"))
+                    and not item.episode_start
+                ):
                     self._client_ticks[item.actor_index].append(int(tick_delta))
                 if bool(item.info.get("valid_transition")):
                     transition = Transition(
@@ -458,6 +467,7 @@ class ClientPool:
             "discarded_transitions": self._discarded_transitions,
             "throughput_transitions_per_second": self._valid_transitions / elapsed,
             "mean_action_latency_ms": fmean(latencies) if latencies else 0.0,
+            "min_client_ticks_per_action": min(ticks, default=0),
             "mean_client_ticks_per_action": fmean(ticks) if ticks else 0.0,
             "max_client_ticks_per_action": max(ticks, default=0),
             "action_distributions": [

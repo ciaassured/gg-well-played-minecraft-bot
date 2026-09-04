@@ -61,7 +61,9 @@ class AsyncFakeEnv:
             "observation_clipped_features": 0,
             "target_direction": "UP",
             "target_progress": float(self.steps),
-            "client_tick_delta": 4 if valid else None,
+            # The first action is held across four callbacks even though the
+            # initial and resulting observation timestamps differ by three.
+            "client_tick_delta": (3 if self.steps == 1 else 4) if valid else None,
             "valid_transition": valid,
         }
 
@@ -88,3 +90,5 @@ def test_eliminated_actor_does_not_block_survivor_actions() -> None:
     assert result.rounds[0].winner_uuid == "player-1"
     assert [transition.actor_index for transition in transitions].count(0) == 1
     assert [transition.actor_index for transition in transitions].count(1) == 3
+    assert pool.stats()["min_client_ticks_per_action"] == 4
+    assert pool.stats()["mean_client_ticks_per_action"] == 4.0

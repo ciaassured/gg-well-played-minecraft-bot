@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from yrush_trainer.checkpoint import load_checkpoint
-from yrush_trainer.config import TrainConfig
+from yrush_trainer.config import ACTION_HOLD_TICKS, TrainConfig
 from yrush_trainer.endpoints import Endpoint, resolve_endpoints
 from yrush_trainer.errors import CheckpointCompatibilityError, InfrastructureError
 from yrush_trainer.policy import PPOPolicy, create_model
@@ -199,7 +199,7 @@ def _validate_stage(command: str, run: RunDirectory, config: TrainConfig) -> Non
         len(head) < upper for head, upper in zip(distributions, (3, 3, 2, 2, 5, 5), strict=True)
     ):
         raise RuntimeError("one-update canary did not sample every action head choice")
-    if float(summary["pool"]["mean_client_ticks_per_action"]) < 4.0:
+    if int(summary["pool"]["min_client_ticks_per_action"]) < ACTION_HOLD_TICKS:
         raise RuntimeError("client action cadence was faster than the four-tick hold")
     if int(summary["server_restart_count"]) != 0:
         raise RuntimeError("server restarted during the bounded stage")
