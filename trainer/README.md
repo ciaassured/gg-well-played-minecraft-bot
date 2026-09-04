@@ -21,7 +21,12 @@ nix run ./trainer#proof -- --run-id <id>
 Every command accepts repeatable `--endpoint HOST:PORT` or an
 `--endpoint-template ... --clients N` pair. Kubernetes supplies all fixed
 StatefulSet endpoints. Losing any endpoint aborts the run and never creates a
-learning transition.
+learning transition. Additional normal players need no trainer endpoint: they
+may participate in the same rounds, and their participant counts and wins are
+reconciled from the controlled clients' YRush terminal packets. If every
+controlled client is eliminated while an external player remains, the report
+marks that global terminal as unobserved instead of misclassifying it as a
+draw.
 
 The scheduler batches every currently ready survivor. An eliminated client no
 longer gates survivor actions; all clients are armed together at each global

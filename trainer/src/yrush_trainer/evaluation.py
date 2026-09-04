@@ -36,6 +36,7 @@ class GlobalRound:
     policy_version: int
     completed: bool
     stopped: bool
+    terminal_observed: bool
     winner_uuid: str | None
     participant_count: int
     completion_time_seconds: float | None
@@ -47,6 +48,16 @@ class GlobalRound:
         value = asdict(self)
         value["players"] = [player.as_dict() for player in self.players]
         return value
+
+    @property
+    def outcome(self) -> str:
+        if self.completed:
+            return "COMPLETED"
+        if self.stopped:
+            return "STOPPED"
+        if self.terminal_observed:
+            return "DRAW"
+        return "CONTROLLED_POOL_ELIMINATED"
 
 
 @dataclass(frozen=True)
@@ -73,7 +84,7 @@ class EvaluationReport:
         values = [
             round_.best_remaining_target_distance
             for round_ in self.rounds
-            if not round_.completed and not round_.stopped
+            if not round_.completed and not round_.stopped and round_.terminal_observed
         ]
         return fmean(values) if values else None
 
@@ -89,10 +100,7 @@ class EvaluationReport:
 
     def as_dict(self) -> dict[str, Any]:
         players = [player for round_ in self.rounds for player in round_.players]
-        global_outcomes = Counter(
-            "COMPLETED" if round_.completed else "STOPPED" if round_.stopped else "DRAW"
-            for round_ in self.rounds
-        )
+        global_outcomes = Counter(round_.outcome for round_ in self.rounds)
         player_outcomes = Counter(player.outcome for player in players)
         per_player: dict[str, Counter[str]] = {}
         for player in players:
@@ -101,6 +109,9 @@ class EvaluationReport:
             "policy_id": self.policy_id,
             "policy_version": self.policy_version,
             "global_round_count": len(self.rounds),
+            "terminal_observed_round_count": sum(
+                round_.terminal_observed for round_ in self.rounds
+            ),
             "global_round_completion_rate": self.round_completion_rate,
             "mean_completion_time_seconds": self.mean_completion_time,
             "mean_best_remaining_target_distance_in_draws": self.mean_best_draw_distance,
@@ -151,17 +162,32 @@ def reconcile_round(
     if any(int(info["policy_version"]) != policy_version for info in results.values()):
         raise ProtocolStateError("clients reported different policy versions")
     participant_counts = {int(info["participant_count"]) for info in results.values()}
-    if participant_counts != {len(endpoints)}:
-        raise ProtocolStateError("YRush participant count does not match the fixed pool")
+    if len(participant_counts) != 1:
+        raise ProtocolStateError("clients disagree about the YRush participant count")
+    participant_count = participant_counts.pop()
+    if participant_count < len(endpoints):
+        raise ProtocolStateError("YRush participant count is smaller than the fixed pool")
     if len({player.target_direction for player in players}) != 1:
         raise ProtocolStateError("clients disagree about the YRush target direction")
 
+    valid_outcomes = {"WON", "LOST", "ELIMINATED", "DRAW", "STOPPED"}
+    if any(player.outcome not in valid_outcomes for player in players):
+        raise ProtocolStateError("global round contains an invalid player outcome")
+    if any(
+        player.winner_uuid is not None
+        for player in players
+        if player.outcome in {"ELIMINATED", "DRAW", "STOPPED"}
+    ):
+        raise ProtocolStateError("non-winning player result reported a winner")
+
     winners = [player for player in players if player.outcome == "WON"]
+    losses = [player for player in players if player.outcome == "LOST"]
     draws = [player for player in players if player.outcome == "DRAW"]
     stopped = [player for player in players if player.outcome == "STOPPED"]
-    ordinary = [player for player in players if player.outcome not in {"ELIMINATED"}]
+    active_counts = [int(info["active_players"]) for info in results.values()]
     winner_uuid: str | None = None
     completion_time: float | None = None
+    terminal_observed = True
     if winners:
         if len(winners) != 1 or any(
             player.outcome not in {"WON", "LOST", "ELIMINATED"} for player in players
@@ -175,24 +201,36 @@ def reconcile_round(
         ):
             raise ProtocolStateError("clients disagree about the YRush winner")
         completion_time = winners[0].completion_time_seconds
+    elif losses:
+        if any(player.outcome not in {"LOST", "ELIMINATED"} for player in players):
+            raise ProtocolStateError("externally won round has conflicting player outcomes")
+        reported_winners = {player.winner_uuid for player in losses}
+        if len(reported_winners) != 1 or None in reported_winners:
+            raise ProtocolStateError("clients disagree about the external YRush winner")
+        winner_uuid = reported_winners.pop()
+        controlled_uuids = {player.player_uuid for player in players}
+        if participant_count == len(endpoints) or winner_uuid in controlled_uuids:
+            raise ProtocolStateError("external YRush winner is inconsistent with participants")
+        completion_time = min(player.completion_time_seconds for player in losses)
     elif stopped:
         if any(player.outcome not in {"STOPPED", "ELIMINATED"} for player in players):
             raise ProtocolStateError("stopped round has conflicting player outcomes")
     elif draws:
         if any(player.outcome not in {"DRAW", "ELIMINATED"} for player in players):
             raise ProtocolStateError("drawn round has conflicting player outcomes")
-    elif ordinary:
-        raise ProtocolStateError("global round has no winner, draw, or stop result")
-    if not winners and any(player.winner_uuid is not None for player in players):
-        raise ProtocolStateError("non-winning round reported a winner")
+    else:
+        terminal_observed = min(active_counts) == 0
+        if not terminal_observed and participant_count == len(endpoints):
+            raise ProtocolStateError("active players remain outside the reported participant pool")
 
     return GlobalRound(
         round_sequence=round_sequence,
         policy_version=policy_version,
-        completed=bool(winners),
+        completed=winner_uuid is not None,
         stopped=bool(stopped),
+        terminal_observed=terminal_observed,
         winner_uuid=winner_uuid,
-        participant_count=len(endpoints),
+        participant_count=participant_count,
         completion_time_seconds=completion_time,
         best_remaining_target_distance=min(
             player.best_remaining_target_distance for player in players

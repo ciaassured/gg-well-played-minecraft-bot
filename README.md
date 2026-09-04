@@ -21,7 +21,10 @@ The components communicate only through explicit boundaries:
 Start one process per terminal, in this order:
 
 ```console
-YRUSH_EXPECTED_CLIENT_COUNT=1 nix run ./yrush-server#server
+YRUSH_EXPECTED_CLIENT_COUNT=1 \
+  YRUSH_EXPECTED_CLIENT_NAMES=yrushbot-0 \
+  YRUSH_MAX_PLAYERS=8 \
+  nix run ./yrush-server#server
 nix run ./client-mod#headless
 nix run ./trainer#smoke -- --rounds 2
 ```
@@ -32,9 +35,11 @@ The defaults use Paper at `127.0.0.1:25565` and the trainer listener at
 a distinct `YRUSH_CLIENT_RUNTIME`, `YRUSH_TRAINER_PORT`, and
 `YRUSH_CLIENT_USERNAME`, then pass every endpoint to the trainer.
 
-The server waits for exactly `YRUSH_EXPECTED_CLIENT_COUNT` players before it
-issues `yrush start training`. Any later departure is a fixed-pool failure and
-aborts an active trainer command.
+The server waits for the comma-separated `YRUSH_EXPECTED_CLIENT_NAMES` before
+it issues `yrush start training`. Any later departure by one of those required
+Fabric clients is a fixed-pool failure and aborts an active trainer command.
+Other players can join and leave normally and are enrolled by YRush at the
+next complete round boundary, up to `YRUSH_MAX_PLAYERS`.
 
 ## Farm deployment
 

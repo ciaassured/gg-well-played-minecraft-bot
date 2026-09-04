@@ -21,7 +21,9 @@ node's local ephemeral filesystem. No server volume claim is used.
 
 Configuration is external:
 
-- `YRUSH_EXPECTED_CLIENT_COUNT` is the immutable client-pool size.
+- `YRUSH_EXPECTED_CLIENT_COUNT` is the immutable Fabric client-pool size.
+- `YRUSH_EXPECTED_CLIENT_NAMES` is the comma-separated list of those required
+  Minecraft usernames and must contain exactly that many unique names.
 - `YRUSH_MAX_PLAYERS` must be at least that size.
 - `YRUSH_SERVER_XMS` and `YRUSH_SERVER_XMX` set the Java heap.
 - `YRUSH_WORLD_SEED` sets normal-world generation.
@@ -30,12 +32,14 @@ Configuration is external:
 - `YRUSH_FAIL_ON_CONTAINER_RESTART=1` makes a Kubernetes container restart
   fail against the surviving `emptyDir` instead of silently reusing the world.
 
-After Paper is ready, the entrypoint waits until the online count exactly
-matches the expected pool, issues `yrush start training` once, verifies YRush
-accepted it with the full participant count, and then publishes `/data/ready`.
-Any later membership change removes readiness, stops the server, and causes all
-trainer connections to fail. Termination sends `yrush stop` before Paper's
-`stop` command.
+After Paper is ready, the entrypoint waits for every named Fabric client,
+issues `yrush start training` once, verifies YRush accepted at least that many
+participants, and then publishes `/data/ready`. A required client departure
+removes readiness, stops the server, and causes all trainer connections to
+fail. Other players may freely join and leave like a normal server. YRush adds
+eligible extra players to the next complete round; a player arriving during an
+active round waits in the lobby until that boundary. Termination sends
+`yrush stop` before Paper's `stop` command.
 
 The server emits `YRUSH_METRIC` records for ephemeral disk use, world size, and
 round-preparation latency and requests Paper TPS output every ten seconds. Size

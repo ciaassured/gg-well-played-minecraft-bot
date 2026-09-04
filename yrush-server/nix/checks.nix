@@ -68,6 +68,7 @@
       container-entrypoint-smoke = pkgs.runCommand "yrush-server-entrypoint-smoke" {} ''
         output=$(YRUSH_ENTRYPOINT_VALIDATE=1 \
           YRUSH_EXPECTED_CLIENT_COUNT=12 \
+          YRUSH_EXPECTED_CLIENT_NAMES=bot00,bot01,bot02,bot03,bot04,bot05,bot06,bot07,bot08,bot09,bot10,bot11 \
           YRUSH_MAX_PLAYERS=14 \
           YRUSH_WORLD_SEED=-42 \
           YRUSH_STARTUP_TIMEOUT_SECONDS=300 \
@@ -75,12 +76,27 @@
           POD_RESTART_COUNT=2 \
           ${serverArtifacts.containerEntrypoint}/bin/yrush-server-container)
         test "$output" = \
-          "expected=12 max-players=14 heap=2g..4g runtime=/data seed=-42 startup-timeout=300 pod=pod-uid restart=2"
+          "expected=12 names=bot00,bot01,bot02,bot03,bot04,bot05,bot06,bot07,bot08,bot09,bot10,bot11 max-players=14 heap=2g..4g runtime=/data seed=-42 startup-timeout=300 pod=pod-uid restart=2"
 
         if YRUSH_ENTRYPOINT_VALIDATE=1 \
-          YRUSH_EXPECTED_CLIENT_COUNT=4 YRUSH_MAX_PLAYERS=3 \
+          YRUSH_EXPECTED_CLIENT_COUNT=4 YRUSH_EXPECTED_CLIENT_NAMES=bot0,bot1,bot2,bot3 \
+          YRUSH_MAX_PLAYERS=3 \
           ${serverArtifacts.containerEntrypoint}/bin/yrush-server-container 2>/dev/null; then
           echo "max players below the client pool unexpectedly passed validation" >&2
+          exit 1
+        fi
+
+        if YRUSH_ENTRYPOINT_VALIDATE=1 \
+          YRUSH_EXPECTED_CLIENT_COUNT=2 YRUSH_EXPECTED_CLIENT_NAMES=bot0 \
+          ${serverArtifacts.containerEntrypoint}/bin/yrush-server-container 2>/dev/null; then
+          echo "incomplete required-client name list unexpectedly passed validation" >&2
+          exit 1
+        fi
+
+        if YRUSH_ENTRYPOINT_VALIDATE=1 \
+          YRUSH_EXPECTED_CLIENT_COUNT=2 YRUSH_EXPECTED_CLIENT_NAMES=bot0,bot0 \
+          ${serverArtifacts.containerEntrypoint}/bin/yrush-server-container 2>/dev/null; then
+          echo "duplicate required-client names unexpectedly passed validation" >&2
           exit 1
         fi
         touch "$out"
@@ -107,7 +123,10 @@
           | grep -q 'enabled: true'
         grep -q "printf 'yrush start training" ${./packages.nix}
         grep -q 'expected clients did not arrive before timeout' ${./packages.nix}
-        grep -q 'fixed client pool changed' ${./packages.nix}
+        grep -q 'required client pool changed' ${./packages.nix}
+        grep -q 'missing_required_clients' ${./packages.nix}
+        grep -q 'YRUSH_EXPECTED_CLIENT_NAMES' ${./packages.nix}
+        grep -q 'launch_participants < expected_clients' ${./packages.nix}
         grep -q "printf 'yrush stop" ${./packages.nix}
         grep -q 'YRUSH_METRIC' ${./packages.nix}
         grep -q 'world_growth_bytes' ${./packages.nix}

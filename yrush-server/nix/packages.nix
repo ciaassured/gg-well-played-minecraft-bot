@@ -79,6 +79,7 @@
       text = ''
         runtime_dir="''${YRUSH_SERVER_RUNTIME:-/data}"
         expected_clients="''${YRUSH_EXPECTED_CLIENT_COUNT:-1}"
+        expected_client_names="''${YRUSH_EXPECTED_CLIENT_NAMES:-yrushbot-0}"
         max_players="''${YRUSH_MAX_PLAYERS:-$expected_clients}"
         server_xms="''${YRUSH_SERVER_XMS:-2g}"
         server_xmx="''${YRUSH_SERVER_XMX:-4g}"
@@ -92,6 +93,23 @@
           echo "YRUSH_EXPECTED_CLIENT_COUNT must be a positive integer" >&2
           exit 2
         fi
+        IFS=',' read -r -a required_clients <<<"$expected_client_names"
+        if (( ''${#required_clients[@]} != expected_clients )); then
+          echo "YRUSH_EXPECTED_CLIENT_NAMES must contain exactly YRUSH_EXPECTED_CLIENT_COUNT names" >&2
+          exit 2
+        fi
+        declare -A unique_required_clients=()
+        for required_client in "''${required_clients[@]}"; do
+          if [[ ! "$required_client" =~ ^[A-Za-z0-9_]{1,16}$ ]]; then
+            echo "YRUSH_EXPECTED_CLIENT_NAMES contains an invalid Minecraft username" >&2
+            exit 2
+          fi
+          if [[ -n "''${unique_required_clients[$required_client]:-}" ]]; then
+            echo "YRUSH_EXPECTED_CLIENT_NAMES must not contain duplicates" >&2
+            exit 2
+          fi
+          unique_required_clients[$required_client]=1
+        done
         if [[ ! "$max_players" =~ ^[1-9][0-9]*$ ]] || (( max_players < expected_clients )); then
           echo "YRUSH_MAX_PLAYERS must be an integer at least YRUSH_EXPECTED_CLIENT_COUNT" >&2
           exit 2
@@ -109,8 +127,8 @@
           exit 2
         fi
         if [[ "''${YRUSH_ENTRYPOINT_VALIDATE:-0}" == 1 ]]; then
-          printf 'expected=%s max-players=%s heap=%s..%s runtime=%s seed=%s startup-timeout=%s pod=%s restart=%s\n' \
-            "$expected_clients" "$max_players" "$server_xms" "$server_xmx" \
+          printf 'expected=%s names=%s max-players=%s heap=%s..%s runtime=%s seed=%s startup-timeout=%s pod=%s restart=%s\n' \
+            "$expected_clients" "$expected_client_names" "$max_players" "$server_xms" "$server_xmx" \
             "$runtime_dir" "$world_seed" "$startup_timeout" "$pod_uid" "$restart_count"
           exit 0
         fi
@@ -175,8 +193,8 @@
           sleep 1
         done
 
-        online_count() {
-          local first_line response count attempt
+        online_snapshot() {
+          local first_line response count roster attempt
           first_line=$(wc -l < "$log_file")
           printf 'list\n' >&3
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -185,7 +203,8 @@
               | tail -n 1 || true)
             if [[ -n "$response" ]]; then
               count=$(sed -E 's/.*There are ([0-9]+) of a max.*/\1/' <<<"$response")
-              printf '%s\n' "$count"
+              roster=$(sed -E 's/.*players online:[[:space:]]*//' <<<"$response")
+              printf '%s\t%s\n' "$count" "$roster"
               return 0
             fi
             if (( attempt < 10 )); then
@@ -195,13 +214,29 @@
           return 1
         }
 
+        missing_required_clients() {
+          local roster="$1" required_client wrapped_roster missing
+          wrapped_roster=",''${roster// /},"
+          missing=""
+          for required_client in "''${required_clients[@]}"; do
+            if [[ "$wrapped_roster" != *",$required_client,"* ]]; then
+              missing="''${missing:+$missing,}$required_client"
+            fi
+          done
+          printf '%s\n' "$missing"
+        }
+
         clients=0
-        until (( clients == expected_clients )); do
+        roster=""
+        missing_clients="$expected_client_names"
+        until [[ -z "$missing_clients" ]]; do
           kill -0 "$server_pid" 2>/dev/null || fail_startup "Paper exited while waiting for clients"
           (( SECONDS < deadline )) || fail_startup "expected clients did not arrive before timeout"
-          clients=$(online_count || printf '0')
-          if (( clients > expected_clients )); then
-            fail_startup "online player count exceeds the fixed client pool"
+          snapshot=$(online_snapshot || printf '0\t')
+          IFS=$'\t' read -r clients roster <<<"$snapshot"
+          missing_clients=$(missing_required_clients "$roster")
+          if (( clients >= max_players )) && [[ -n "$missing_clients" ]]; then
+            fail_startup "server is full before all required clients arrived: missing=$missing_clients"
           fi
           sleep 1
         done
@@ -211,11 +246,19 @@
         training_started=0
         while (( SECONDS < deadline )); do
           new_log=$(tail -n "+$((start_line + 1))" "$log_file")
-          if grep -q 'Starting YRush. mode=training' <<<"$new_log" \
-            && grep -Eq "Launching round=[0-9]+ participants=$expected_clients mode=training" \
-              <<<"$new_log"; then
-            training_started=1
-            break
+          if grep -q 'Starting YRush. mode=training' <<<"$new_log"; then
+            launch_line=$(grep -E 'Launching round=[0-9]+ participants=[0-9]+ mode=training' \
+              <<<"$new_log" | tail -n 1 || true)
+            if [[ -n "$launch_line" ]]; then
+              launch_participants=$(sed -E \
+                's/.*Launching round=[0-9]+ participants=([0-9]+) mode=training.*/\1/' \
+                <<<"$launch_line")
+              if (( launch_participants < expected_clients )); then
+                fail_startup "YRush launched without the complete required client pool"
+              fi
+              training_started=1
+              break
+            fi
           fi
           if grep -qE 'YRush is already running|No eligible players found' <<<"$new_log"; then
             fail_startup "YRush training mode was rejected"
@@ -225,10 +268,18 @@
         done
         (( training_started == 1 )) || fail_startup "YRush training mode did not start"
 
-        printf '{"pod_uid":"%s","restart_count":%s,"expected_clients":%s,"world_seed":"%s"}\n' \
-          "$pod_uid" "$restart_count" "$expected_clients" "$world_seed" > "$ready_file.tmp"
+        snapshot=$(online_snapshot || fail_startup "could not verify required clients after starting YRush")
+        IFS=$'\t' read -r clients roster <<<"$snapshot"
+        missing_clients=$(missing_required_clients "$roster")
+        if [[ -n "$missing_clients" ]]; then
+          fail_startup "required clients departed while starting YRush: missing=$missing_clients"
+        fi
+
+        printf '{"pod_uid":"%s","restart_count":%s,"expected_clients":%s,"expected_client_names":"%s","world_seed":"%s"}\n' \
+          "$pod_uid" "$restart_count" "$expected_clients" "$expected_client_names" \
+          "$world_seed" > "$ready_file.tmp"
         mv "$ready_file.tmp" "$ready_file"
-        echo "YRush fixed pool ready: clients=$expected_clients pod=$pod_uid restart=$restart_count"
+        echo "YRush required client pool ready: clients=$expected_client_names online=$clients pod=$pod_uid restart=$restart_count"
 
         monitor_preparation() {
           local line preparation_started now preparation_ms
@@ -248,7 +299,8 @@
         preparation_pid=$!
 
         monitor_pool() {
-          local observed disk_bytes world_bytes initial_world_bytes world_growth_bytes
+          local observed roster snapshot missing_clients departed_client
+          local disk_bytes world_bytes initial_world_bytes world_growth_bytes
           local pool_log_line pool_log_end new_pool_log
           initial_world_bytes=0
           if [[ -d "$runtime_dir/world" ]]; then
@@ -256,21 +308,33 @@
           fi
           pool_log_line=$(wc -l < "$log_file")
           while kill -0 "$server_pid" 2>/dev/null; do
-            observed=$(online_count || printf '%s' "$expected_clients")
+            if ! snapshot=$(online_snapshot); then
+              echo "YRush roster query timed out; retaining readiness until the next check" >&2
+              sleep 10
+              continue
+            fi
+            IFS=$'\t' read -r observed roster <<<"$snapshot"
+            missing_clients=$(missing_required_clients "$roster")
             pool_log_end=$(wc -l < "$log_file")
             new_pool_log=""
             if (( pool_log_end > pool_log_line )); then
               new_pool_log=$(sed -n "$((pool_log_line + 1)),''${pool_log_end}p" "$log_file")
               pool_log_line=$pool_log_end
             fi
-            if grep -Eq 'lost connection:|left the game' <<<"$new_pool_log"; then
-              observed=-1
-            fi
-            if (( observed != expected_clients )); then
-              printf 'fixed client pool changed: expected=%s observed=%s\n' \
-                "$expected_clients" "$observed" > "$fatal_file"
+            departed_client=""
+            for required_client in "''${required_clients[@]}"; do
+              if grep -Fq "$required_client lost connection:" <<<"$new_pool_log" \
+                || grep -Fq "$required_client left the game" <<<"$new_pool_log"; then
+                departed_client="$required_client"
+                break
+              fi
+            done
+            if [[ -n "$missing_clients" || -n "$departed_client" ]]; then
+              printf 'required client pool changed: expected=%s missing=%s departed=%s online=%s\n' \
+                "$expected_client_names" "$missing_clients" "$departed_client" "$observed" \
+                > "$fatal_file"
               rm -f "$ready_file"
-              echo "YRush fixed-pool failure: expected=$expected_clients observed=$observed" >&2
+              echo "YRush required-client failure: expected=$expected_client_names missing=$missing_clients departed=$departed_client online=$observed" >&2
               printf 'yrush stop\nstop\n' >&3 || true
               return 1
             fi
@@ -281,8 +345,9 @@
               world_bytes=$(du -sb "$runtime_dir/world" | awk '{print $1}')
             fi
             world_growth_bytes=$((world_bytes - initial_world_bytes))
-            printf 'YRUSH_METRIC {"disk_bytes":%s,"world_bytes":%s,"world_growth_bytes":%s,"online_players":%s}\n' \
-              "$disk_bytes" "$world_bytes" "$world_growth_bytes" "$observed"
+            printf 'YRUSH_METRIC {"disk_bytes":%s,"world_bytes":%s,"world_growth_bytes":%s,"online_players":%s,"required_clients":%s}\n' \
+              "$disk_bytes" "$world_bytes" "$world_growth_bytes" "$observed" \
+              "$expected_clients"
             printf 'tps\n' >&3 || true
             sleep 10
           done
@@ -327,6 +392,7 @@
           ]}"
           "YRUSH_SERVER_RUNTIME=/data"
           "YRUSH_EXPECTED_CLIENT_COUNT=1"
+          "YRUSH_EXPECTED_CLIENT_NAMES=yrushbot-0"
           "YRUSH_MAX_PLAYERS=1"
           "YRUSH_SERVER_XMS=2g"
           "YRUSH_SERVER_XMX=4g"

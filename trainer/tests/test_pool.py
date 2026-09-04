@@ -61,6 +61,7 @@ class AsyncFakeEnv:
             "observation_clipped_features": 0,
             "target_direction": "UP",
             "target_progress": float(self.steps),
+            "active_players": 1,
             # The first action is held across four callbacks even though the
             # initial and resulting observation timestamps differ by three.
             "client_tick_delta": (3 if self.steps == 1 else 4) if valid else None,
