@@ -90,6 +90,13 @@
         grep -q 'releaseAll(client)' "$source"
         grep -q 'YRUSH_PAPER_ADDRESS' ${./packages.nix}
         grep -q 'yrush.client.server' ${./packages.nix}
+        grep -q -- '-Dhmc.optimizations.render_resources=false' ${./packages.nix}
+        grep -q -- '-Dhmc.optimizations.render_resources=false' ${./apps.nix}
+        if grep -q -- '-Dhmc.optimizations.render_resources=true' \
+          ${./packages.nix} ${./apps.nix}; then
+          echo "unsafe entity-renderer release is enabled" >&2
+          exit 1
+        fi
         touch "$out"
       '';
     };

@@ -41,6 +41,9 @@ Configuration is external:
 Readiness is published only after the trainer listener is bound and Minecraft
 has joined Paper. It is removed on Paper loss. Kubernetes uses an exec file
 probe because connecting to the port would occupy its single trainer peer.
+Frame and world rendering remain disabled, but the small entity-renderer
+registry is retained because Minecraft's item-pickup network handler uses it
+even when no frames are produced.
 
 The `#image` app keeps the generic client GHCR repository. Set
 `YRUSH_LOCAL_IMAGE_TRANSPORT=docker-daemon` only when loading into Docker. The

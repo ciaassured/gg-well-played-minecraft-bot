@@ -141,7 +141,7 @@
         export ALSOFT_DRIVERS=null SDL_AUDIODRIVER=dummy OPENAL_SOFT_LOGLEVEL=0
         cd "$runtime_dir"
         game_args=("$@")
-        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Dhmc.optimizations.enabled=true -Dhmc.optimizations.render=true -Dhmc.optimizations.world_render_state=true -Dhmc.optimizations.particles=true -Dhmc.optimizations.sound=true -Dhmc.optimizations.lighting=true -Dhmc.optimizations.animated_textures=true -Dhmc.optimizations.chunk_mesh=true -Dhmc.optimizations.render_buffers=true -Dhmc.optimizations.render_resources=true -Dyrush.client.offline=true -Dyrush.client.bind=$trainer_bind -Dyrush.client.port=$trainer_port -Dyrush.client.server=$paper_address -Dyrush.client.readinessFile=$readiness_file -Xms$client_xms -Xmx$client_xmx\" --game-args \"''${game_args[*]}\""
+        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Dhmc.optimizations.enabled=true -Dhmc.optimizations.render=true -Dhmc.optimizations.world_render_state=true -Dhmc.optimizations.particles=true -Dhmc.optimizations.sound=true -Dhmc.optimizations.lighting=true -Dhmc.optimizations.animated_textures=true -Dhmc.optimizations.chunk_mesh=true -Dhmc.optimizations.render_buffers=true -Dhmc.optimizations.render_resources=false -Dyrush.client.offline=true -Dyrush.client.bind=$trainer_bind -Dyrush.client.port=$trainer_port -Dyrush.client.server=$paper_address -Dyrush.client.readinessFile=$readiness_file -Xms$client_xms -Xmx$client_xmx\" --game-args \"''${game_args[*]}\""
         printf '%s\n' "$command_line" | java -Dhmc.fileloglevel=INFO \
           --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
       '';
