@@ -100,8 +100,8 @@
         fi
         declare -A unique_required_clients=()
         for required_client in "''${required_clients[@]}"; do
-          if [[ ! "$required_client" =~ ^[A-Za-z0-9_]{1,16}$ ]]; then
-            echo "YRUSH_EXPECTED_CLIENT_NAMES contains an invalid Minecraft username" >&2
+          if [[ ! "$required_client" =~ ^[A-Za-z0-9_-]{1,16}$ ]]; then
+            echo "YRUSH_EXPECTED_CLIENT_NAMES contains an invalid client username" >&2
             exit 2
           fi
           if [[ -n "''${unique_required_clients[$required_client]:-}" ]]; then
@@ -323,8 +323,9 @@
             fi
             departed_client=""
             for required_client in "''${required_clients[@]}"; do
-              if grep -Fq "$required_client lost connection:" <<<"$new_pool_log" \
-                || grep -Fq "$required_client left the game" <<<"$new_pool_log"; then
+              if grep -Eq \
+                "(^|[^A-Za-z0-9_-])$required_client (lost connection:|left the game)" \
+                <<<"$new_pool_log"; then
                 departed_client="$required_client"
                 break
               fi

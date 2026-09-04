@@ -68,7 +68,7 @@
       container-entrypoint-smoke = pkgs.runCommand "yrush-server-entrypoint-smoke" {} ''
         output=$(YRUSH_ENTRYPOINT_VALIDATE=1 \
           YRUSH_EXPECTED_CLIENT_COUNT=12 \
-          YRUSH_EXPECTED_CLIENT_NAMES=bot00,bot01,bot02,bot03,bot04,bot05,bot06,bot07,bot08,bot09,bot10,bot11 \
+          YRUSH_EXPECTED_CLIENT_NAMES=bot-00,bot-01,bot-02,bot-03,bot-04,bot-05,bot-06,bot-07,bot-08,bot-09,bot-10,bot-11 \
           YRUSH_MAX_PLAYERS=14 \
           YRUSH_WORLD_SEED=-42 \
           YRUSH_STARTUP_TIMEOUT_SECONDS=300 \
@@ -76,7 +76,7 @@
           POD_RESTART_COUNT=2 \
           ${serverArtifacts.containerEntrypoint}/bin/yrush-server-container)
         test "$output" = \
-          "expected=12 names=bot00,bot01,bot02,bot03,bot04,bot05,bot06,bot07,bot08,bot09,bot10,bot11 max-players=14 heap=2g..4g runtime=/data seed=-42 startup-timeout=300 pod=pod-uid restart=2"
+          "expected=12 names=bot-00,bot-01,bot-02,bot-03,bot-04,bot-05,bot-06,bot-07,bot-08,bot-09,bot-10,bot-11 max-players=14 heap=2g..4g runtime=/data seed=-42 startup-timeout=300 pod=pod-uid restart=2"
 
         if YRUSH_ENTRYPOINT_VALIDATE=1 \
           YRUSH_EXPECTED_CLIENT_COUNT=4 YRUSH_EXPECTED_CLIENT_NAMES=bot0,bot1,bot2,bot3 \
