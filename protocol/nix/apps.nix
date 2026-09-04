@@ -15,7 +15,7 @@
   in {
     apps.validate = {
       type = "app";
-      program = "${validate}/bin/jump-protocol-validate";
+      program = "${validate}/bin/yrush-protocol-validate";
       meta.description = "Lint, format-check, compile, and validate the YRush protocol";
     };
   };
