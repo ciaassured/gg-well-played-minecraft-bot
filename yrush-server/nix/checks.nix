@@ -151,6 +151,9 @@
         grep -q 'YRUSH_METRIC' ${./packages.nix}
         grep -q 'world_growth_bytes' ${./packages.nix}
         grep -q 'round_preparation_ms' ${./packages.nix}
+        grep -q 'health monitor exited unexpectedly' ${./packages.nix}
+        grep -q 'restarting the server container' ${./packages.nix}
+        grep -q 'disk usage query failed; reporting unknown usage' ${./packages.nix}
         grep -q 'recovering YRush server container' ${./packages.nix}
         grep -q 'preserving world' ${./packages.nix}
         if grep -q 'YRUSH_FAIL_ON_CONTAINER_RESTART' ${./packages.nix}; then

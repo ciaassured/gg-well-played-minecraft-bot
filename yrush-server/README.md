@@ -47,6 +47,10 @@ the readiness metadata and metrics. Client disconnects still abort any trainer
 command that was active during the interruption, so recovery cannot turn an
 infrastructure failure into a learning transition.
 
+The required-client monitor is itself supervised. Transient disk-size sampling
+errors produce an unknown metric sample, while an unexpected monitor exit
+removes readiness and triggers the same same-pod recovery path.
+
 The server emits `YRUSH_METRIC` records for ephemeral disk use, world size, and
 round-preparation latency and requests Paper TPS output every ten seconds. Size
 the Kubernetes ephemeral-storage limit from those measurements.

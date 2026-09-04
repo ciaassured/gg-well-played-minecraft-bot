@@ -323,7 +323,10 @@
           local pool_log_line pool_log_end new_pool_log
           initial_world_bytes=0
           if [[ -d "$runtime_dir/world" ]]; then
-            initial_world_bytes=$(du -sb "$runtime_dir/world" | awk '{print $1}')
+            if ! initial_world_bytes=$(du -sb "$runtime_dir/world" 2>/dev/null | awk '{print $1}'); then
+              echo "YRush initial world usage query failed; reporting unknown growth" >&2
+              initial_world_bytes=-1
+            fi
           fi
           pool_log_line=$(wc -l < "$log_file")
           while kill -0 "$server_pid" 2>/dev/null; do
@@ -359,12 +362,22 @@
               return 1
             fi
 
-            disk_bytes=$(du -sb "$runtime_dir" | awk '{print $1}')
+            if ! disk_bytes=$(du -sb "$runtime_dir" 2>/dev/null | awk '{print $1}'); then
+              echo "YRush disk usage query failed; reporting unknown usage for this sample" >&2
+              disk_bytes=-1
+            fi
             world_bytes=0
             if [[ -d "$runtime_dir/world" ]]; then
-              world_bytes=$(du -sb "$runtime_dir/world" | awk '{print $1}')
+              if ! world_bytes=$(du -sb "$runtime_dir/world" 2>/dev/null | awk '{print $1}'); then
+                echo "YRush world usage query failed; reporting unknown usage for this sample" >&2
+                world_bytes=-1
+              fi
             fi
-            world_growth_bytes=$((world_bytes - initial_world_bytes))
+            if (( world_bytes >= 0 && initial_world_bytes >= 0 )); then
+              world_growth_bytes=$((world_bytes - initial_world_bytes))
+            else
+              world_growth_bytes=-1
+            fi
             printf 'YRUSH_METRIC {"disk_bytes":%s,"world_bytes":%s,"world_growth_bytes":%s,"online_players":%s,"required_clients":%s,"pod_uid":"%s","restart_count":%s}\n' \
               "$disk_bytes" "$world_bytes" "$world_growth_bytes" "$observed" \
               "$expected_clients" "$pod_uid" "$restart_count"
@@ -375,6 +388,30 @@
         monitor_pool &
         monitor_pid=$!
 
+        monitor_watchdog() {
+          local monitor_status
+          while kill -0 "$server_pid" 2>/dev/null; do
+            if ! kill -0 "$monitor_pid" 2>/dev/null; then
+              if wait "$monitor_pid"; then
+                monitor_status=0
+              else
+                monitor_status=$?
+              fi
+              if [[ ! -f "$fatal_file" ]]; then
+                printf 'YRush required-client health monitor exited unexpectedly: status=%s\n' \
+                  "$monitor_status" > "$fatal_file"
+              fi
+              rm -f "$ready_file"
+              echo "YRush required-client health monitor exited; restarting the server container" >&2
+              printf 'yrush stop\nstop\n' >&3 || true
+              return
+            fi
+            sleep 1
+          done
+        }
+        monitor_watchdog &
+        watchdog_pid=$!
+
         set +e
         wait "$server_pid"
         server_status=$?
@@ -384,8 +421,10 @@
         fi
         kill "$monitor_pid" 2>/dev/null || true
         kill "$preparation_pid" 2>/dev/null || true
+        kill "$watchdog_pid" 2>/dev/null || true
         wait "$monitor_pid" 2>/dev/null || true
         wait "$preparation_pid" 2>/dev/null || true
+        wait "$watchdog_pid" 2>/dev/null || true
         rm -f "$ready_file" "$console_fifo"
         if [[ -f "$fatal_file" ]]; then
           exit 1
