@@ -84,8 +84,8 @@
         paper_address="''${JUMP_PAPER_ADDRESS:-jump-paper:25565}"
         trainer_bind="''${JUMP_TRAINER_BIND:-0.0.0.0}"
         trainer_port="''${JUMP_TRAINER_PORT:-64123}"
-        client_xms="''${JUMP_CLIENT_XMS:-512m}"
-        client_xmx="''${JUMP_CLIENT_XMX:-1536m}"
+        client_xms="''${JUMP_CLIENT_XMS:-192m}"
+        client_xmx="''${JUMP_CLIENT_XMX:-320m}"
         pod_name="''${POD_NAME:-jump-client-0}"
         ordinal="''${pod_name##*-}"
         if [[ ! "$ordinal" =~ ^[0-9]+$ ]]; then
@@ -157,8 +157,8 @@
           "JUMP_PAPER_ADDRESS=jump-paper:25565"
           "JUMP_TRAINER_BIND=0.0.0.0"
           "JUMP_TRAINER_PORT=64123"
-          "JUMP_CLIENT_XMS=512m"
-          "JUMP_CLIENT_XMX=1536m"
+          "JUMP_CLIENT_XMS=192m"
+          "JUMP_CLIENT_XMX=320m"
         ];
       };
     };

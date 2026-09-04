@@ -42,9 +42,10 @@ controls without disconnecting Minecraft. Paper loss is reported to a connected
 trainer and retried with exponential backoff capped at 30 seconds.
 
 Each Kubernetes StatefulSet ordinal mounts a 2 GiB PVC at `/runtime`, so the
-first public Minecraft download is reused after restarts. Container memory
-limits must remain at least 512 MiB above `JUMP_CLIENT_XMX` for native JVM/LWJGL
-memory and filesystem cache.
+first public Minecraft download is reused after restarts. Both launchers default
+to `JUMP_CLIENT_XMS=192m` and `JUMP_CLIENT_XMX=320m`. Container memory remains
+an independent budget because it includes the HeadlessMC JVM, native JVM/LWJGL
+memory, and filesystem cache in addition to the Minecraft heap.
 
 The `#image` app builds `result-client-image`. Use `#image -- load <tag>` to
 load the same archive into Podman, or set `JUMP_LOCAL_IMAGE_TRANSPORT` to

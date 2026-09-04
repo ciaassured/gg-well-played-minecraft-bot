@@ -14,8 +14,8 @@
         paper_address="''${JUMP_PAPER_ADDRESS:-127.0.0.1:25565}"
         trainer_bind="''${JUMP_TRAINER_BIND:-127.0.0.1}"
         trainer_port="''${JUMP_TRAINER_PORT:-64123}"
-        client_xms="''${JUMP_CLIENT_XMS:-512m}"
-        client_xmx="''${JUMP_CLIENT_XMX:-1536m}"
+        client_xms="''${JUMP_CLIENT_XMS:-192m}"
+        client_xmx="''${JUMP_CLIENT_XMX:-320m}"
         pod_name="''${POD_NAME:-''${HOSTNAME:-jump-client-0}}"
         ordinal="''${pod_name##*-}"
         if [[ ! "$ordinal" =~ ^[0-9]+$ ]]; then

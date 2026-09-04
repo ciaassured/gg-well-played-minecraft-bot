@@ -121,15 +121,15 @@
         grep -q 'jump.client.bind' ${./apps.nix}
         grep -q 'jump.client.readinessFile' ${./apps.nix}
         grep -q 'hmc.offline.username' ${./apps.nix}
-        grep -q 'JUMP_CLIENT_XMS:-512m' ${./apps.nix}
-        grep -q 'JUMP_CLIENT_XMX:-1536m' ${./apps.nix}
+        grep -q 'JUMP_CLIENT_XMS:-192m' ${./apps.nix}
+        grep -q 'JUMP_CLIENT_XMX:-320m' ${./apps.nix}
         grep -q 'hmc.assets.dummy=true' ${./packages.nix}
         grep -q 'hmc-optimizations.jar' ${./packages.nix}
         grep -q -- '-Dhmc.optimizations.enabled=true' ${./packages.nix}
-        grep -q 'JUMP_CLIENT_XMS:-512m' ${./packages.nix}
-        grep -q 'JUMP_CLIENT_XMX:-1536m' ${./packages.nix}
-        grep -q '"JUMP_CLIENT_XMS=512m"' ${./packages.nix}
-        grep -q '"JUMP_CLIENT_XMX=1536m"' ${./packages.nix}
+        grep -q 'JUMP_CLIENT_XMS:-192m' ${./packages.nix}
+        grep -q 'JUMP_CLIENT_XMX:-320m' ${./packages.nix}
+        grep -q '"JUMP_CLIENT_XMS=192m"' ${./packages.nix}
+        grep -q '"JUMP_CLIENT_XMX=320m"' ${./packages.nix}
         grep -q 'readiness.markReady' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'scheduleReconnect("Paper disconnected")' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'connectMinecraft(client);' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
