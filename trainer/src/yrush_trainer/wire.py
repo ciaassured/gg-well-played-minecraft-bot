@@ -121,6 +121,8 @@ class YRushConnection:
         self.client_tick = 0
         self.current_round_sequence = 0
         self.current_policy_version = 0
+        self.current_round_direction = pb.ROUND_DIRECTION_UNSPECIFIED
+        self.current_target_y = 0
         self._closed = False
         self._handshake()
 
@@ -225,6 +227,8 @@ class YRushConnection:
                     )
         self.current_round_sequence = round_sequence
         self.current_policy_version = policy_version
+        self.current_round_direction = int(ready.direction)
+        self.current_target_y = int(ready.target_y)
         self.client_tick = initial.client_tick
         return initial
 

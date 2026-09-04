@@ -73,12 +73,18 @@ def round_result(
 
 
 class FakeConnection:
-    def __init__(self, outcomes: list[int] | None = None) -> None:
+    def __init__(
+        self,
+        outcomes: list[int] | None = None,
+        direction: int = pb.ROUND_DIRECTION_UP,
+    ) -> None:
         self.player_uuid = "player-0"
         self.player_name = "player-zero"
         self.outcomes = list(outcomes or [pb.PLAYER_OUTCOME_WON])
         self.round_sequence = 0
         self.policy_version = 0
+        self.current_round_direction = direction
+        self.current_target_y = 80
         self.sequence = 0
         self.closed = False
 

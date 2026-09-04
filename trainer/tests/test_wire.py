@@ -120,6 +120,8 @@ def test_handshake_arm_and_acknowledged_action_ordering() -> None:
     )
     connection = YRushConnection(transport)
     initial = connection.arm(request_id=3, round_sequence=1, policy_version=0)
+    assert connection.current_round_direction == pb.ROUND_DIRECTION_UP
+    assert connection.current_target_y == 80
     exchange = connection.step(initial, 1, action)
     assert exchange.action_applied
     assert exchange.observation.observation_sequence == 1

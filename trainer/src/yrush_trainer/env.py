@@ -109,8 +109,9 @@ class YRushEnv(gym.Env[NDArray[np.float32], NDArray[np.int64]]):
             raise ValueError("round sequence must be positive and policy version nonnegative")
         self._next_round_sequence = max(self._next_round_sequence, round_sequence + 1)
         self.policy_version = policy_version
+        connection = self._ensure_connection()
         try:
-            observation = self._ensure_connection().arm(
+            observation = connection.arm(
                 request_id=self._allocate_identifier(),
                 round_sequence=round_sequence,
                 policy_version=policy_version,
@@ -124,9 +125,13 @@ class YRushEnv(gym.Env[NDArray[np.float32], NDArray[np.int64]]):
         self._episode_actions = 0
         self._observation_clips = 0
         self._episode_target_progress = 0.0
-        self._target_direction = (
-            "UP" if observation.signed_target_height_difference >= 0.0 else "DOWN"
-        )
+        if connection.current_round_direction == pb.ROUND_DIRECTION_UP:
+            self._target_direction = "UP"
+        elif connection.current_round_direction == pb.ROUND_DIRECTION_DOWN:
+            self._target_direction = "DOWN"
+        else:
+            self._fail_episode()
+            raise InfrastructureError("episode readiness has no YRush target direction")
         normalized = normalize_observation_with_stats(observation)
         self._observation_clips += normalized.clipped_features
         return normalized.values, self._info(observation, None, None, True)

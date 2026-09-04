@@ -17,6 +17,16 @@ def test_exact_spaces_and_gymnasium_contract() -> None:
     env.close()
 
 
+def test_target_direction_uses_episode_readiness_not_observation_sign() -> None:
+    connection = FakeConnection(direction=pb.ROUND_DIRECTION_DOWN)
+    env = YRushEnv(connection_factory=lambda: connection, identifier_base=150)
+
+    _observation, info = env.reset(options={"round_sequence": 1, "policy_version": 0})
+
+    assert info["target_direction"] == "DOWN"
+    env.close()
+
+
 def test_reward_terminal_values_and_stop_truncation() -> None:
     previous = raw_observation(target_difference=10.0)
     current = raw_observation(target_difference=9.5, sequence=1)
