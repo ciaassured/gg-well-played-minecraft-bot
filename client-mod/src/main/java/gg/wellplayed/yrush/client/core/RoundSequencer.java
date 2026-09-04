@@ -211,13 +211,18 @@ public final class RoundSequencer {
 
   private Event receiveComplete(YRushPacket.Phase previous, YRushPacket packet)
       throws ProtocolViolation {
+    if (activeArm == null) {
+      // YRush can cancel a round while it is still preparing a safe start, before any
+      // LOCKED_COUNTDOWN -> ACTIVE transition exists. It also sends the terminal snapshot to
+      // clients that attached mid-round. Neither case belongs to the armed Gym episode: wait
+      // for INACTIVE and keep the arm for the next complete round.
+      skipPendingUntilInactive = true;
+      phase = Phase.SKIPPING;
+      return Event.NONE;
+    }
     if (previous != YRushPacket.Phase.ACTIVE && previous != YRushPacket.Phase.ROUND_COMPLETE) {
       throw violation(
           ErrorCode.ERROR_CODE_ROUND_ORDERING, "ROUND_COMPLETE arrived without an active round");
-    }
-    if (activeArm == null) {
-      phase = Phase.SKIPPING;
-      return Event.NONE;
     }
     if (terminalReported) {
       if (packet.playerOutcome() != YRushPacket.Outcome.ELIMINATED) {

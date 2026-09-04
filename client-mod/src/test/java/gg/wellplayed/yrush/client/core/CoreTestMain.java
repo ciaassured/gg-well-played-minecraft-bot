@@ -25,6 +25,7 @@ public final class CoreTestMain {
     framingIsBounded();
     packetsAreStrictlyParsed();
     attachmentDuringAnActiveRoundIsSkipped();
+    cancellationBeforeActiveIsSkipped();
     eliminationAllowsTheNextRoundToBeArmed();
     orderingAndPolicyVersionsAreStrict();
     partialActionsAreNotAcknowledgedAsComplete();
@@ -106,6 +107,24 @@ public final class CoreTestMain {
     equal(
         RoundSequencer.Event.EPISODE_STARTED,
         sequencer.receive(YRushPacket.parse(activeJson(true)), 23));
+    equal(1L, sequencer.activeArm().getRoundSequence());
+  }
+
+  private static void cancellationBeforeActiveIsSkipped() throws Exception {
+    RoundSequencer sequencer = new RoundSequencer();
+    sequencer.startSession("session");
+    sequencer.receive(YRushPacket.parse(inactiveJson()), 10);
+    sequencer.arm(arm("session", 1, 1, 0));
+    sequencer.receive(YRushPacket.parse(countdownJson()), 11);
+    equal(
+        RoundSequencer.Event.NONE,
+        sequencer.receive(YRushPacket.parse(completeJson("STOPPED")), 12));
+    equal(RoundSequencer.Phase.SKIPPING, sequencer.phase());
+    equal(RoundSequencer.Event.CLEANED, sequencer.receive(YRushPacket.parse(inactiveJson()), 13));
+    sequencer.receive(YRushPacket.parse(countdownJson()), 14);
+    equal(
+        RoundSequencer.Event.EPISODE_STARTED,
+        sequencer.receive(YRushPacket.parse(activeJson(true)), 15));
     equal(1L, sequencer.activeArm().getRoundSequence());
   }
 
