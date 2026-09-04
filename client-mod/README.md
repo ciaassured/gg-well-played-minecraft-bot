@@ -9,6 +9,7 @@ load Replay Mod.
 ```console
 nix develop ./client-mod
 nix build ./client-mod
+nix build ./client-mod#hmc-optimizations
 nix build ./client-mod#oci
 nix run ./client-mod#image
 nix flake check ./client-mod
@@ -28,7 +29,10 @@ Configuration is external:
 - `JUMP_CLIENT_XMS` and `JUMP_CLIENT_XMX` select the client JVM heap.
 
 Headless clients use a two-chunk render distance and a five-chunk simulation
-distance, the minimum simulation distance accepted by Minecraft 26.2.
+distance, the minimum simulation distance accepted by Minecraft 26.2. Dummy
+assets and every HMC Optimizations category are enabled by default. The pinned
+HMC Optimizations 0.5.0 Fabric build targets Minecraft 26.2, Fabric Loader
+0.19.3 or newer, and Java 25.
 
 Readiness is published atomically only after the trainer listener is bound and
 Paper acknowledges protocol v3. It is removed on Paper loss. Kubernetes uses

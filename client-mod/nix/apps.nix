@@ -30,6 +30,8 @@
         ln -sfn ${clientArtifacts.clientMod}/share/jump-benchmark-client/jump-benchmark-client.jar \
           "$game_dir/mods/jump-benchmark-client.jar"
         ln -sfn ${clientArtifacts.fabricApi} "$game_dir/mods/fabric-api.jar"
+        ln -sfn ${clientArtifacts.hmcOptimizations}/share/hmc-optimizations/hmc-optimizations.jar \
+          "$game_dir/mods/hmc-optimizations.jar"
 
         java_path="$(command -v java)"
         {
@@ -64,7 +66,7 @@
         export OPENAL_SOFT_LOGLEVEL=0
         cd "$runtime_dir"
         game_args=("$@")
-        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Djump.client.offline=true -Djump.client.bind=$trainer_bind -Djump.client.port=$trainer_port -Djump.client.server=$paper_address -Djump.client.readinessFile=$readiness_file -Xms$client_xms -Xmx$client_xmx\" --game-args \"''${game_args[*]}\""
+        command_line="launch fabric:26.2 --uid 0.19.3 -offline -lwjgl -keep --jvm \"-Djava.awt.headless=true -Dhmc.optimizations.enabled=true -Dhmc.optimizations.render=true -Dhmc.optimizations.world_render_state=true -Dhmc.optimizations.particles=true -Dhmc.optimizations.sound=true -Dhmc.optimizations.lighting=true -Dhmc.optimizations.animated_textures=true -Dhmc.optimizations.chunk_mesh=true -Dhmc.optimizations.render_buffers=true -Dhmc.optimizations.render_resources=true -Djump.client.offline=true -Djump.client.bind=$trainer_bind -Djump.client.port=$trainer_port -Djump.client.server=$paper_address -Djump.client.readinessFile=$readiness_file -Xms$client_xms -Xmx$client_xmx\" --game-args \"''${game_args[*]}\""
         printf '%s\n' "$command_line" | java -Dhmc.fileloglevel=INFO \
           --enable-native-access=ALL-UNNAMED -jar headlessmc.jar
       '';

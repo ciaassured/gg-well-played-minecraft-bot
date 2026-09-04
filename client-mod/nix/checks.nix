@@ -6,6 +6,30 @@
   }: {
     checks = {
       mod-build = clientArtifacts.clientMod;
+      hmc-optimizations-build = clientArtifacts.hmcOptimizations;
+
+      hmc-optimizations-metadata =
+        pkgs.runCommand "hmc-optimizations-metadata" {
+          nativeBuildInputs = [pkgs.jq pkgs.unzip];
+        } ''
+          mkdir jar
+          unzip -q \
+            ${clientArtifacts.hmcOptimizations}/share/hmc-optimizations/hmc-optimizations.jar \
+            -d jar
+          jq -e '
+            .id == "hmc_optimizations"
+            and .version == "0.5.0"
+            and .name == "HMC-Optimizations"
+            and .environment == "client"
+            and .depends.fabricloader == ">=0.19.3"
+            and .depends.minecraft == "~26.2"
+            and .depends.java == ">=25"
+          ' jar/fabric.mod.json >/dev/null
+          grep -q '^Implementation-Title: HMC-Optimizations' jar/META-INF/MANIFEST.MF
+          grep -q '^Implementation-Version: 0.5.0' jar/META-INF/MANIFEST.MF
+          test -f jar/hmcoptimizations.client.mixins.json
+          touch "$out"
+        '';
 
       container-entrypoint-smoke = pkgs.runCommand "jump-client-entrypoint-smoke" {} ''
         output=$(JUMP_ENTRYPOINT_VALIDATE=1 POD_NAME=jump-client-117 \
@@ -76,6 +100,14 @@
         grep -q 'keySprint.setDown(false)' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'clientTick - lastHelloAttemptTick >= 20' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'hmc.offline=true' ${./apps.nix}
+        grep -q 'hmc.assets.dummy=true' ${./apps.nix}
+        grep -q 'hmc-optimizations.jar' ${./apps.nix}
+        grep -q -- '-Dhmc.optimizations.enabled=true' ${./apps.nix}
+        for category in render world_render_state particles sound lighting \
+          animated_textures chunk_mesh render_buffers render_resources; do
+          grep -q -- "-Dhmc.optimizations.$category=true" ${./apps.nix}
+          grep -q -- "-Dhmc.optimizations.$category=true" ${./packages.nix}
+        done
         grep -q 'echo "hmc.fileloglevel=INFO"' ${./apps.nix}
         grep -q 'java -Dhmc.fileloglevel=INFO' ${./apps.nix}
         grep -q 'jump.client.offline=true' ${./apps.nix}
@@ -89,8 +121,15 @@
         grep -q 'jump.client.bind' ${./apps.nix}
         grep -q 'jump.client.readinessFile' ${./apps.nix}
         grep -q 'hmc.offline.username' ${./apps.nix}
-        grep -q 'JUMP_CLIENT_XMS' ${./apps.nix}
-        grep -q 'JUMP_CLIENT_XMX' ${./apps.nix}
+        grep -q 'JUMP_CLIENT_XMS:-512m' ${./apps.nix}
+        grep -q 'JUMP_CLIENT_XMX:-1536m' ${./apps.nix}
+        grep -q 'hmc.assets.dummy=true' ${./packages.nix}
+        grep -q 'hmc-optimizations.jar' ${./packages.nix}
+        grep -q -- '-Dhmc.optimizations.enabled=true' ${./packages.nix}
+        grep -q 'JUMP_CLIENT_XMS:-512m' ${./packages.nix}
+        grep -q 'JUMP_CLIENT_XMX:-1536m' ${./packages.nix}
+        grep -q '"JUMP_CLIENT_XMS=512m"' ${./packages.nix}
+        grep -q '"JUMP_CLIENT_XMX=1536m"' ${./packages.nix}
         grep -q 'readiness.markReady' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'scheduleReconnect("Paper disconnected")' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
         grep -q 'connectMinecraft(client);' ${../src/main/java/gg/wellplayed/jump/client/JumpBenchmarkClient.java}
