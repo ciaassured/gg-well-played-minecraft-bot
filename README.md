@@ -36,96 +36,12 @@ The server waits for exactly `YRUSH_EXPECTED_CLIENT_COUNT` players before it
 issues `yrush start training`. Any later departure is a fixed-pool failure and
 aborts an active trainer command.
 
-## Kubernetes farm
+## Farm deployment
 
-[`deploy/kubernetes/yrush-farm.yaml`](deploy/kubernetes/yrush-farm.yaml)
-contains the restricted `yrush-training` namespace, one server Deployment and
-stable Service, a parallel client StatefulSet, explicit Cilium policy, a
-separate artifacts claim, and suspended bounded trainer Jobs.
-Before applying it:
-
-1. Replace every `REPLACE_WITH_COMMIT` image tag with the same published full
-   commit revision.
-   Replace each `REPLACE_WITH_RUN_ID` with a unique suffix as well.
-2. Label an appropriate node `yrush.gg/local-ssd=true`. That label is the
-   operator's assertion that Kubernetes ephemeral storage is backed by local
-   SSD.
-3. Keep the server's expected count, maximum players, client replicas, endpoint
-   count, and trainer expected count consistent if changing the default pool
-   of four.
-4. Set the chosen world seed and resource sizes.
-
-Apply the farm and wait for the clients and server:
-
-```console
-kubectl apply -f deploy/kubernetes/yrush-farm.yaml
-kubectl -n yrush-training rollout status deployment/yrush-paper --timeout=15m
-kubectl -n yrush-training rollout status statefulset/yrush-client --timeout=15m
-```
-
-The Paper Service uses `publishNotReadyAddresses: true` so clients can join
-while the entrypoint is still waiting for the complete pool. Server readiness
-is not published until Paper is ready, all expected clients are present, and
-YRush training mode has launched with that participant count.
-
-Paper is available to the local `192.168.98.0/24` LAN at
-`10.128.16.2:25565`, matching the previous farm access path. The `aurah__`
-offline account is seeded as a level-four operator on each fresh server pod.
-Clients may download Minecraft over ports 80 and 443 during first startup;
-their 2 GiB `nfs-nasdaq` runtime claims retain that cache across pod updates.
-
-The server mounts a disk-backed `emptyDir` at `/data`, requests `20Gi` of
-ephemeral storage, and has a `50Gi` limit. World data, region files, Paper
-caches, plugin state, and logs all live there; there is deliberately no server
-volume claim. `/artifacts` is a separate persistent claim used only by trainer
-Jobs. Keep the server pod alive across the bounded stages so its generated
-chunks remain warm.
-
-Before each trainer Job, capture the live server identity and verify it has not
-changed:
-
-```console
-kubectl -n yrush-training get pod -l app.kubernetes.io/name=yrush-paper \
-  -o jsonpath='{.items[0].metadata.uid}{" "}{.items[0].status.containerStatuses[0].restartCount}{"\n"}'
-```
-
-Put those two values into the `yrush-run-metadata` ConfigMap before each stage;
-the suspended Jobs read it only when their pods are created. Unsuspend and wait
-for each stage in order:
-
-```console
-kubectl -n yrush-training patch configmap yrush-run-metadata --type=merge \
-  -p '{"data":{"YRUSH_SERVER_POD_UID":"<observed-uid>","YRUSH_SERVER_RESTART_COUNT":"<observed-count>"}}'
-kubectl -n yrush-training patch job yrush-canary --type=merge -p '{"spec":{"suspend":false}}'
-kubectl -n yrush-training wait --for=condition=complete job/yrush-canary --timeout=30m
-kubectl -n yrush-training patch job yrush-tuning-canary --type=merge -p '{"spec":{"suspend":false}}'
-kubectl -n yrush-training wait --for=condition=complete job/yrush-tuning-canary --timeout=90m
-kubectl -n yrush-training patch job yrush-proof --type=merge -p '{"spec":{"suspend":false}}'
-kubectl -n yrush-training wait --for=condition=complete job/yrush-proof --timeout=4h
-```
-
-The stages run one update/two evaluation rounds, four updates/four rounds, and
-twelve updates/eight rounds respectively. A stage fails on pool loss, server
-restart metadata, invalid action cadence, a missing update, entropy collapse,
-or excessive KL. Re-read the server pod UID and restart count between stages.
-Also inspect the server's `YRUSH_METRIC` log records for `/data` usage, world
-growth, and round-preparation latency, plus Paper's TPS output. Revise the
-ephemeral-storage request and limit from those measurements before a long run.
-
-After all three bounded stages pass, create the final long command yourself
-with a new run ID and the desired update/evaluation budget. For example, from a
-trainer container with the same endpoints and `/artifacts` claim:
-
-```console
-yrush-trainer train \
-  --endpoint-template 'yrush-client-{index}.yrush-clients:64123' \
-  --clients 4 \
-  --pool-startup-timeout 900 \
-  --run-root /artifacts/runs \
-  --run-id <unique-long-run-id> \
-  --updates <chosen-update-count> \
-  --evaluation-rounds <chosen-round-count>
-```
+Kubernetes deployment and operating instructions live only in the sibling
+`../kube` repository, under `flux/apps/farm/yrush-training*`. This repository
+publishes the coordinated server, client, and trainer images; it does not own
+or duplicate cluster manifests.
 
 ## Training and inference
 

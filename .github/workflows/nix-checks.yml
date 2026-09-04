@@ -10,16 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  deployment:
-    name: Check Kubernetes farm
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Validate deployment invariants
-        run: python3 deploy/tests/validate_manifest.py
-
   check:
     name: Check ${{ matrix.flake }}
     runs-on: ubuntu-24.04
