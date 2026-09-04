@@ -51,6 +51,12 @@ world seed. Every archive embeds protocol, spaces, normalization, and
 deployment metadata. Unsupported archives, including old DQN files, are
 rejected before SB3 loads them.
 
+The recorded server restart count is the baseline captured before a run, so a
+healthy server that has already recovered may start a new bounded stage. A
+restart during collection disconnects the fixed client pool and raises an
+infrastructure error; it is never converted into a transition or a passed
+stage.
+
 The `#image` app retains the generic trainer GHCR repository. `/artifacts` is
 the persistent trainer volume and is independent of the server's ephemeral
 world. The root README is the canonical orchestration guide.

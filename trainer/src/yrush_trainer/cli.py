@@ -201,8 +201,6 @@ def _validate_stage(command: str, run: RunDirectory, config: TrainConfig) -> Non
         raise RuntimeError("one-update canary did not sample every action head choice")
     if int(summary["pool"]["min_client_ticks_per_action"]) < ACTION_HOLD_TICKS:
         raise RuntimeError("client action cadence was faster than the four-tick hold")
-    if int(summary["server_restart_count"]) != 0:
-        raise RuntimeError("server restarted during the bounded stage")
 
 
 def _smoke(arguments: argparse.Namespace) -> dict[str, Any]:
