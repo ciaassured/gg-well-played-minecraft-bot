@@ -9,8 +9,8 @@
       hash = "sha256-zazfsliY3l5LSw5d3MJyL3cGfkZgVwnC2IbAAOu2PsU=";
     };
     yrushPlugin = pkgs.fetchurl {
-      url = "https://github.com/ciaassured/minecraft-yrush/releases/download/v1.3.1/YRush.jar";
-      hash = "sha256-/FLZRz5fJ7BayywWK2C0eD3gRvgZd1kquIW0YgCUpfc=";
+      url = "https://github.com/ciaassured/minecraft-yrush/releases/download/v1.3.2/YRush.jar";
+      hash = "sha256-fy2LbtTJJyTSvbz+Ffnez2BoUc0YSx3Y0meSHrlQ6SE=";
     };
     serverProperties = pkgs.writeText "yrush-server.properties" ''
       allow-flight=true
@@ -58,11 +58,11 @@
       debug:
         enabled: true
     '';
-    serverPackage = pkgs.runCommand "yrush-server-1.3.1" {} ''
+    serverPackage = pkgs.runCommand "yrush-server-1.3.2" {} ''
       mkdir -p "$out/share/yrush-server"
       cp ${paperServer} "$out/share/yrush-server/paper-26.2-112.jar"
       cp ${mojangServer} "$out/share/yrush-server/mojang-26.2.jar"
-      cp ${yrushPlugin} "$out/share/yrush-server/YRush-1.3.1.jar"
+      cp ${yrushPlugin} "$out/share/yrush-server/YRush-1.3.2.jar"
       cp ${serverProperties} "$out/share/yrush-server/server.properties.template"
       cp ${yrushConfig} "$out/share/yrush-server/yrush-config.yml"
     '';
@@ -161,7 +161,7 @@
           "$runtime_dir/paper.jar"
         ln -sfn ${serverPackage}/share/yrush-server/mojang-26.2.jar \
           "$runtime_dir/cache/mojang_26.2.jar"
-        ln -sfn ${serverPackage}/share/yrush-server/YRush-1.3.1.jar \
+        ln -sfn ${serverPackage}/share/yrush-server/YRush-1.3.2.jar \
           "$runtime_dir/plugins/YRush.jar"
         install -m 0644 ${yrushConfig} "$runtime_dir/plugins/YRush/config.yml"
         printf 'eula=true\n' > "$runtime_dir/eula.txt"

@@ -1,6 +1,6 @@
 # YRush server
 
-This project packages one Paper 26.2 process and the pinned YRush v1.3.1
+This project packages one Paper 26.2 process and the pinned YRush v1.3.2
 release. It uses a normal generated world and has no custom server plugin or
 Protobuf dependency.
 

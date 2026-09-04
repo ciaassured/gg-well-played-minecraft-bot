@@ -53,11 +53,11 @@
         '';
 
       pinned-yrush-release =
-        pkgs.runCommand "pinned-yrush-v1.3.1" {
+        pkgs.runCommand "pinned-yrush-v1.3.2" {
           nativeBuildInputs = [pkgs.unzip];
         } ''
           echo \
-            "fc52d9473e5f27b05acb2c162b60b4783de046f81977592ab885b4620094a5f7  ${serverArtifacts.yrushPlugin}" \
+            "7f2d8b6ed4c92724d2bdbcfe15f9decf606851cd184b1dd8d267921eb950e921  ${serverArtifacts.yrushPlugin}" \
             | sha256sum --check --status
           unzip -p ${serverArtifacts.yrushPlugin} plugin.yml > plugin.yml
           grep -q '^name: YRush$' plugin.yml

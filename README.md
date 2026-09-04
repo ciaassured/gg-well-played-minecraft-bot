@@ -9,7 +9,7 @@ The components communicate only through explicit boundaries:
 
 - `protocol/` defines the intentionally incompatible `yrush.v1` trainer/client
   Protobuf contract.
-- `yrush-server/` packages Paper 26.2 and pinned YRush v1.3.1.
+- `yrush-server/` packages Paper 26.2 and pinned YRush v1.3.2.
 - `client-mod/` bridges YRush's JSON channel to one trainer endpoint per
   persistent client.
 - `trainer/` owns Gymnasium semantics, PPO collection, evaluation, and durable

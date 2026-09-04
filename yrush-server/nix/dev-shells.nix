@@ -8,7 +8,7 @@
         pkgs.shellcheck
       ];
       shellHook = ''
-        echo "Paper 26.2 and YRush v1.3.1 packaging shell (Java 25)"
+        echo "Paper 26.2 and YRush v1.3.2 packaging shell (Java 25)"
       '';
     };
   };

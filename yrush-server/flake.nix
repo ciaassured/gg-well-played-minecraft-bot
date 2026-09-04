@@ -1,5 +1,5 @@
 {
-  description = "Single Paper 26.2 server with pinned YRush v1.3.1";
+  description = "Single Paper 26.2 server with pinned YRush v1.3.2";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/ffb3c9b700e759be2ef13237c9d8f953b32a1e46";
